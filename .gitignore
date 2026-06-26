@@ -1,0 +1,58 @@
+# Local secrets and runtime state
+private/
+.env
+.env.*
+!.env.example
+placeholder
+logs/
+working/
+.pids/
+
+# Python caches and build outputs
+__pycache__/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+*.pyc
+*.pyo
+*.pyd
+*.egg-info/
+dist/
+!ui/dist/
+!ui/dist/**
+build/
+
+# Virtual environments
+venv/
+.venv/
+.venv.ps100-backup-*/
+
+# Data and local databases
+data/
+*.db
+
+# IDE/editor metadata
+.vscode/
+.idea/
+
+# Local logs and ad-hoc files
+*.log
+docker-build*.log
+env-*-secrets
+archive/
+database/
+*.pid
+tmp/
+storage/
+node_modules
+*.tfstate
+docker-build-chat-client.log
+docker-build-everything.log
+docker-build-example-mcp-server.log
+docker-build.log
+working/w28a-*-screenshots/
+node_modules/
+docker/chat-client.env.resolved
+*.env.resolved
+docker-env.local
+**/.session_secret

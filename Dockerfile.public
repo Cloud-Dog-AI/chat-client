@@ -1,0 +1,131 @@
+# syntax=docker/dockerfile:1
+# cloud-dog-chat-client — Dockerfile.public (PS-97 v1.1 §1.1.3)
+#
+# PUBLIC variant — for external / GitHub-boundary builds (e.g. ghcr.io, Docker Hub).
+# Uses the active package index supplied by the build environment.
+#
+# Default index is public PyPI (https://pypi.org/simple/). Development and CI
+# variants build Dockerfile.chat-client (the internal/dev variant) instead.
+#
+# Select via: docker-build.sh --variant public
+#
+# NOTE: the cloud-dog platform packages (cloud-dog-config, cloud-dog-logging,
+# cloud-dog-api-kit, cloud-dog-idam, cloud-dog-llm, cloud-dog-agent, cloud-dog-cache,
+# cloud-dog-db, cloud-dog-jobs, cloud-dog-storage) MUST be available on the active
+# public index (e.g. pypi.org, or installed from their GitHub-mirrored source) before
+# this Dockerfile can build successfully end-to-end. That publish step is tracked
+# separately in the publication pipeline.
+#
+# The web UI is shipped as a PRE-BUILT static bundle under ui/dist/. No npm / Node
+# toolchain or internal npm registry is required to build this image.
+
+# ── Builder ──────────────────────────────────────────────────────
+FROM python:3.12-slim AS builder
+
+ARG HTTP_PROXY HTTPS_PROXY NO_PROXY http_proxy https_proxy no_proxy
+ENV HTTP_PROXY=${HTTP_PROXY} HTTPS_PROXY=${HTTPS_PROXY} NO_PROXY=${NO_PROXY} \
+    http_proxy=${http_proxy} https_proxy=${https_proxy} no_proxy=${no_proxy}
+
+# Active package index. Default is public PyPI. The build environment may supply a
+# boundary-appropriate index instead (e.g. a Gitea public index) via this ARG or via
+# a mounted pip.conf secret (id=pip_conf). Never hardcode an internal host here.
+ARG PIP_INDEX_URL=https://pypi.org/simple/
+
+WORKDIR /app
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    ca-certificates gcc git \
+    && rm -rf /var/lib/apt/lists/*
+
+# Public build — no private CA overlay. System ca-certificates trust store is
+# sufficient for public or boundary-provided package indexes.
+
+COPY pyproject.toml README.md requirements.txt ./
+COPY src/ ./src/
+
+# If a pip.conf secret is mounted, it takes precedence (it may set index-url to a
+# boundary index). Otherwise the public PIP_INDEX_URL ARG is used. No --extra-index-url
+# is ever used (PS-97 §3.3, §4 anti-pattern).
+#
+# NOTE: BuildKit auto-promotes the `ARG PIP_INDEX_URL` into the RUN environment, and
+# pip's env var (PIP_INDEX_URL) OUTRANKS /etc/pip.conf. So when the boundary pip.conf
+# secret is mounted we must `unset PIP_INDEX_URL` for that branch, otherwise the ARG
+# default (public PyPI) silently overrides the mounted boundary index. Index-agnostic:
+# no host is hardcoded here.
+RUN --mount=type=secret,id=pip_conf,target=/etc/pip.conf \
+    if [ -f /etc/pip.conf ]; then \
+      unset PIP_INDEX_URL && \
+      pip install --no-cache-dir . && \
+      pip install --no-cache-dir python-multipart==0.0.20 ; \
+    else \
+      pip install --no-cache-dir --index-url "${PIP_INDEX_URL}" . && \
+      pip install --no-cache-dir --index-url "${PIP_INDEX_URL}" python-multipart==0.0.20 ; \
+    fi
+
+# ── Final ────────────────────────────────────────────────────────
+FROM python:3.12-slim
+LABEL org.opencontainers.image.licenses="Apache-2.0"
+LABEL org.opencontainers.image.vendor="Cloud-Dog, Viewdeck Engineering Limited"
+LABEL org.opencontainers.image.source="https://github.com/cloud-dog-ai/chat-client"
+
+ARG HTTP_PROXY HTTPS_PROXY NO_PROXY http_proxy https_proxy no_proxy
+ENV HTTP_PROXY=${HTTP_PROXY} HTTPS_PROXY=${HTTPS_PROXY} NO_PROXY=${NO_PROXY} \
+    http_proxy=${http_proxy} https_proxy=${https_proxy} no_proxy=${no_proxy}
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    ca-certificates curl netcat-openbsd procps net-tools \
+    && rm -rf /var/lib/apt/lists/*
+
+# Public runtime — no private CA overlay, no SSH server (the optional dev SSH
+# console is not shipped in the public image).
+
+WORKDIR /app
+
+COPY --from=builder /usr/local/lib/python3.12/site-packages /usr/local/lib/python3.12/site-packages
+COPY --from=builder /usr/local/bin /usr/local/bin
+
+COPY src/ ./src/
+COPY ui/ ./ui/
+COPY defaults.yaml ./defaults.yaml
+COPY config.yaml ./config.yaml
+COPY migrations/ ./migrations/
+COPY database/migrations/ ./database/migrations/
+COPY database/migrations/cloud_dog_db/versions/chat_0002_config_crud.py ./migrations/versions/chat_0002_config_crud.py
+COPY database/migrations/cloud_dog_db/versions/chat_0003_api_key_lifecycle.py ./migrations/versions/chat_0003_api_key_lifecycle.py
+COPY env-example ./env-example
+COPY docker-env.public.example ./env-docker-defaults
+COPY server_control.sh ./server_control.sh
+COPY start_api_server.py ./start_api_server.py
+COPY start_web_server.py ./start_web_server.py
+COPY start_mcp_server.py ./start_mcp_server.py
+COPY start_a2a_server.py ./start_a2a_server.py
+COPY scripts/docker-entrypoint.chat-client.sh ./docker-entrypoint.sh
+COPY scripts/healthcheck-chat-client.sh ./healthcheck.sh
+
+RUN useradd --system --create-home --uid 10001 --shell /bin/bash chat && \
+    mkdir -p /app/logs /app/working /app/.pids /app/database /home/chat && \
+    chmod +x /app/docker-entrypoint.sh /app/healthcheck.sh /app/server_control.sh \
+      /app/start_api_server.py /app/start_web_server.py /app/start_mcp_server.py /app/start_a2a_server.py && \
+    chown -R chat:chat /app /home/chat
+
+ENV PYTHONUNBUFFERED=1
+ENV CLOUD_DOG__APP__PROJECT_ROOT=/app
+ENV CLOUD_DOG__CLIENT_API__ENABLED=true
+ENV CHAT_CLIENT_ENABLE_SSH=false
+ENV CHAT_CLIENT_ENV_FILE=/app/env-docker-defaults
+ENV CHAT_CLIENT_MODE=all
+ENV CHAT_CLIENT_API_HOST=0.0.0.0
+ENV CHAT_CLIENT_API_PORT=8050
+ENV CHAT_CLIENT_WEB_PORT=8051
+ENV CHAT_CLIENT_MCP_PORT=8052
+ENV CHAT_CLIENT_A2A_PORT=8053
+
+EXPOSE 8050 8051 8052 8053
+
+HEALTHCHECK --interval=30s --timeout=10s --start-period=90s --retries=5 \
+  CMD /app/healthcheck.sh
+
+USER chat
+
+ENTRYPOINT ["/app/docker-entrypoint.sh"]
+CMD ["all"]

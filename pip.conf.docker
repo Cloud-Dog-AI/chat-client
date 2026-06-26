@@ -1,0 +1,5 @@
+[global]
+extra-index-url = https://pypi.cloud-dog.net/simple/
+trusted-host = pypi.cloud-dog.net
+               pypi.org
+               files.pythonhosted.org

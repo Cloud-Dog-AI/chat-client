@@ -1,0 +1,156 @@
+# Copyright 2026 Cloud-Dog, Viewdeck Engineering Limited
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+from __future__ import annotations
+
+from typing import Any, AsyncIterator, Dict, List, Optional
+
+from cloud_dog_llm.config.models import ProviderConfig  # type: ignore[import-untyped]
+from cloud_dog_llm.domain.enums import EventType  # type: ignore[import-untyped]
+from cloud_dog_llm.domain.errors import LLMError  # type: ignore[import-untyped]
+from cloud_dog_llm.domain.models import LLMRequest, Message  # type: ignore[import-untyped]
+from cloud_dog_llm.providers.ollama import OllamaAdapter  # type: ignore[import-untyped]
+
+from .protocols import ChatCompletionResult, ChatMessage, ChatStreamChunk
+from .providers import BaseLLMProvider, LLMProviderError
+
+
+class OllamaProvider(BaseLLMProvider):
+    def _apply_stop(self, content: str) -> str:
+        """Internal helper to apply stop for this module."""
+        if not content or not self.stop:
+            return content
+        first_idx = None
+        for token in self.stop:
+            if not token:
+                continue
+            idx = content.find(token)
+            if idx >= 0 and (first_idx is None or idx < first_idx):
+                first_idx = idx
+        if first_idx is None:
+            return content
+        return content[:first_idx]
+
+    def __init__(
+        self,
+        *,
+        base_url: str,
+        model: str,
+        timeout_seconds: float,
+        stream_enabled: bool,
+        temperature: Optional[float] = None,
+        top_p: Optional[float] = None,
+        top_k: Optional[int] = None,
+        context_window: Optional[int] = None,
+        max_tokens: Optional[int] = None,
+        stop: Optional[list[str]] = None,
+        include_reasoning_tags: bool = False,
+        client: Any = None,
+    ):
+        """Initialise OllamaProvider state and dependencies."""
+        self.base_url = str(base_url).rstrip("/")
+        self.model = str(model)
+        self.timeout_seconds = float(timeout_seconds)
+        self.stream_enabled = bool(stream_enabled)
+        self.temperature = float(temperature) if temperature is not None else None
+        self.top_p = float(top_p) if top_p is not None else None
+        self.top_k = int(top_k) if top_k is not None else None
+        self.context_window = (
+            int(context_window) if context_window is not None else None
+        )
+        self.max_tokens = int(max_tokens) if max_tokens is not None else None
+        self.stop = stop if isinstance(stop, list) else None
+        self.include_reasoning_tags = bool(include_reasoning_tags)
+
+        provider_cfg = ProviderConfig(
+            provider_id="ollama",
+            base_url=self.base_url,
+            model=self.model,
+            timeout_seconds=self.timeout_seconds,
+        )
+        self._adapter = OllamaAdapter(provider_cfg, client=client)
+
+    def _params(self) -> Dict[str, Any]:
+        """Internal helper to params for this module."""
+        params: Dict[str, Any] = {}
+        if self.temperature is not None:
+            params["temperature"] = self.temperature
+        if self.top_p is not None:
+            params["top_p"] = self.top_p
+        if self.top_k is not None:
+            params["top_k"] = self.top_k
+        if self.context_window is not None:
+            params["num_ctx"] = self.context_window
+        if self.stop:
+            params["stop"] = list(self.stop)
+        return params
+
+    @staticmethod
+    def _to_runtime_messages(messages: List[ChatMessage]) -> List[Message]:
+        """Internal helper to to runtime messages for this module."""
+        return [Message(role=m.role, content=m.content) for m in messages]
+
+    @staticmethod
+    def _reasoning(raw: Any) -> str:
+        """Internal helper to reasoning for this module."""
+        if isinstance(raw, dict):
+            msg = raw.get("message")
+            if isinstance(msg, dict):
+                return str(msg.get("thinking") or "")
+        return ""
+
+    async def complete(self, messages: List[ChatMessage]) -> ChatCompletionResult:
+        """Handle complete for the current runtime context."""
+        request = LLMRequest(
+            provider_id="ollama",
+            model=self.model,
+            messages=self._to_runtime_messages(messages),
+            max_tokens=self.max_tokens,
+            params=self._params(),
+            stream=False,
+        )
+        try:
+            result = await self._adapter.invoke(request)
+        except LLMError as e:
+            raise LLMProviderError("LLM provider request failed") from e
+
+        content = str(result.content or "")
+        if self.include_reasoning_tags:
+            reasoning = self._reasoning(result.raw_provider_response)
+            content = (
+                f"<thinking>{reasoning}</thinking><reasoning>{content}</reasoning>"
+            )
+        content = self._apply_stop(content)
+        return ChatCompletionResult(content=content, raw=result.raw_provider_response)
+
+    async def stream(
+        self, messages: List[ChatMessage]
+    ) -> AsyncIterator[ChatStreamChunk]:
+        """Handle stream for the current runtime context."""
+        request = LLMRequest(
+            provider_id="ollama",
+            model=self.model,
+            messages=self._to_runtime_messages(messages),
+            max_tokens=self.max_tokens,
+            params=self._params(),
+            stream=True,
+        )
+        try:
+            async for event in self._adapter.invoke_stream(request):
+                if event.type == EventType.DELTA_TEXT and event.text:
+                    yield ChatStreamChunk(
+                        content_delta=str(event.text), raw={"event": event.type.value}
+                    )
+        except LLMError as e:
+            raise LLMProviderError("LLM provider request failed") from e

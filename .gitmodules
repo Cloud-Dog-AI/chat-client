@@ -1,0 +1,9 @@
+[submodule "third_party/modelcontextprotocol-servers"]
+	path = third_party/modelcontextprotocol-servers
+	url = https://github.com/modelcontextprotocol/servers
+[submodule "third_party/example-remote-server"]
+	path = third_party/example-remote-server
+	url = https://github.com/modelcontextprotocol/example-remote-server
+[submodule "Example-MCP-Server"]
+	path = Example-MCP-Server
+	url = https://github.com/danny-avila/Example-MCP-Server

@@ -1,0 +1,240 @@
+diff --git a/src/everything/Dockerfile b/src/everything/Dockerfile
+index 6729298..5ffc42a 100644
+--- a/src/everything/Dockerfile
++++ b/src/everything/Dockerfile
+@@ -1,5 +1,11 @@
+ FROM node:22.12-alpine AS builder
+ 
++ARG CUSTOM_CA_CERT=custom-ca.crt
++COPY ${CUSTOM_CA_CERT} /usr/local/share/ca-certificates/custom-ca.crt
++RUN apk add --no-cache ca-certificates && update-ca-certificates
++ENV NODE_EXTRA_CA_CERTS=/usr/local/share/ca-certificates/custom-ca.crt
++RUN npm config set cafile /usr/local/share/ca-certificates/custom-ca.crt
++
+ COPY src/everything /app
+ COPY tsconfig.json /tsconfig.json
+ 
+@@ -9,6 +15,12 @@ RUN --mount=type=cache,target=/root/.npm npm install
+ 
+ FROM node:22-alpine AS release
+ 
++ARG CUSTOM_CA_CERT=custom-ca.crt
++COPY ${CUSTOM_CA_CERT} /usr/local/share/ca-certificates/custom-ca.crt
++RUN apk add --no-cache ca-certificates && update-ca-certificates
++ENV NODE_EXTRA_CA_CERTS=/usr/local/share/ca-certificates/custom-ca.crt
++RUN npm config set cafile /usr/local/share/ca-certificates/custom-ca.crt
++
+ WORKDIR /app
+ 
+ COPY --from=builder /app/dist /app/dist
+diff --git a/src/fetch/Dockerfile b/src/fetch/Dockerfile
+index e81610c..a441108 100644
+--- a/src/fetch/Dockerfile
++++ b/src/fetch/Dockerfile
+@@ -1,6 +1,10 @@
+ # Use a Python image with uv pre-installed
+ FROM ghcr.io/astral-sh/uv:python3.12-bookworm-slim AS uv
+ 
++ARG CUSTOM_CA_CERT=custom-ca.crt
++COPY ${CUSTOM_CA_CERT} /usr/local/share/ca-certificates/custom-ca.crt
++RUN apt-get update && apt-get install -y ca-certificates && update-ca-certificates && rm -rf /var/lib/apt/lists/*
++
+ # Install the project into `/app`
+ WORKDIR /app
+ 
+@@ -12,18 +16,22 @@ ENV UV_LINK_MODE=copy
+ 
+ # Install the project's dependencies using the lockfile and settings
+ RUN --mount=type=cache,target=/root/.cache/uv \
+-    --mount=type=bind,source=uv.lock,target=uv.lock \
+-    --mount=type=bind,source=pyproject.toml,target=pyproject.toml \
++    --mount=type=bind,source=src/fetch/uv.lock,target=uv.lock \
++    --mount=type=bind,source=src/fetch/pyproject.toml,target=pyproject.toml \
+     uv sync --locked --no-install-project --no-dev --no-editable
+ 
+ # Then, add the rest of the project source code and install it
+ # Installing separately from its dependencies allows optimal layer caching
+-ADD . /app
++ADD src/fetch /app
+ RUN --mount=type=cache,target=/root/.cache/uv \
+     uv sync --locked --no-dev --no-editable
+ 
+ FROM python:3.12-slim-bookworm
+ 
++ARG CUSTOM_CA_CERT=custom-ca.crt
++COPY ${CUSTOM_CA_CERT} /usr/local/share/ca-certificates/custom-ca.crt
++RUN apt-get update && apt-get install -y ca-certificates && update-ca-certificates && rm -rf /var/lib/apt/lists/*
++
+ WORKDIR /app
+  
+ COPY --from=uv /root/.local /root/.local
+diff --git a/src/filesystem/Dockerfile b/src/filesystem/Dockerfile
+index 418b140..e43c665 100644
+--- a/src/filesystem/Dockerfile
++++ b/src/filesystem/Dockerfile
+@@ -2,6 +2,12 @@ FROM node:22.12-alpine AS builder
+ 
+ WORKDIR /app
+ 
++ARG CUSTOM_CA_CERT=custom-ca.crt
++COPY ${CUSTOM_CA_CERT} /usr/local/share/ca-certificates/custom-ca.crt
++RUN apk add --no-cache ca-certificates && update-ca-certificates
++ENV NODE_EXTRA_CA_CERTS=/usr/local/share/ca-certificates/custom-ca.crt
++RUN npm config set cafile /usr/local/share/ca-certificates/custom-ca.crt
++
+ COPY src/filesystem /app
+ COPY tsconfig.json /tsconfig.json
+ 
+@@ -14,6 +20,12 @@ FROM node:22-alpine AS release
+ 
+ WORKDIR /app
+ 
++ARG CUSTOM_CA_CERT=custom-ca.crt
++COPY ${CUSTOM_CA_CERT} /usr/local/share/ca-certificates/custom-ca.crt
++RUN apk add --no-cache ca-certificates && update-ca-certificates
++ENV NODE_EXTRA_CA_CERTS=/usr/local/share/ca-certificates/custom-ca.crt
++RUN npm config set cafile /usr/local/share/ca-certificates/custom-ca.crt
++
+ COPY --from=builder /app/dist /app/dist
+ COPY --from=builder /app/package.json /app/package.json
+ COPY --from=builder /app/package-lock.json /app/package-lock.json
+diff --git a/src/git/Dockerfile b/src/git/Dockerfile
+index 6b53886..1cf545c 100644
+--- a/src/git/Dockerfile
++++ b/src/git/Dockerfile
+@@ -1,6 +1,10 @@
+ # Use a Python image with uv pre-installed
+ FROM ghcr.io/astral-sh/uv:python3.12-bookworm-slim AS uv
+ 
++ARG CUSTOM_CA_CERT=custom-ca.crt
++COPY ${CUSTOM_CA_CERT} /usr/local/share/ca-certificates/custom-ca.crt
++RUN apt-get update && apt-get install -y ca-certificates && update-ca-certificates && rm -rf /var/lib/apt/lists/*
++
+ # Install the project into `/app`
+ WORKDIR /app
+ 
+@@ -12,18 +16,22 @@ ENV UV_LINK_MODE=copy
+ 
+ # Install the project's dependencies using the lockfile and settings
+ RUN --mount=type=cache,target=/root/.cache/uv \
+-    --mount=type=bind,source=uv.lock,target=uv.lock \
+-    --mount=type=bind,source=pyproject.toml,target=pyproject.toml \
++    --mount=type=bind,source=src/git/uv.lock,target=uv.lock \
++    --mount=type=bind,source=src/git/pyproject.toml,target=pyproject.toml \
+     uv sync --locked --no-install-project --no-dev --no-editable
+ 
+ # Then, add the rest of the project source code and install it
+ # Installing separately from its dependencies allows optimal layer caching
+-ADD . /app
++ADD src/git /app
+ RUN --mount=type=cache,target=/root/.cache/uv \
+     uv sync --locked --no-dev --no-editable
+ 
+ FROM python:3.12-slim-bookworm
+ 
++ARG CUSTOM_CA_CERT=custom-ca.crt
++COPY ${CUSTOM_CA_CERT} /usr/local/share/ca-certificates/custom-ca.crt
++RUN apt-get update && apt-get install -y ca-certificates && update-ca-certificates && rm -rf /var/lib/apt/lists/*
++
+ RUN apt-get update && apt-get install -y git git-lfs && rm -rf /var/lib/apt/lists/* \
+     && git lfs install --system
+ 
+diff --git a/src/memory/Dockerfile b/src/memory/Dockerfile
+index 2f85d0c..c77c871 100644
+--- a/src/memory/Dockerfile
++++ b/src/memory/Dockerfile
+@@ -1,5 +1,11 @@
+ FROM node:22.12-alpine AS builder
+ 
++ARG CUSTOM_CA_CERT=custom-ca.crt
++COPY ${CUSTOM_CA_CERT} /usr/local/share/ca-certificates/custom-ca.crt
++RUN apk add --no-cache ca-certificates && update-ca-certificates
++ENV NODE_EXTRA_CA_CERTS=/usr/local/share/ca-certificates/custom-ca.crt
++RUN npm config set cafile /usr/local/share/ca-certificates/custom-ca.crt
++
+ COPY src/memory /app
+ COPY tsconfig.json /tsconfig.json
+ 
+@@ -11,6 +17,12 @@ RUN --mount=type=cache,target=/root/.npm-production npm ci --ignore-scripts --om
+ 
+ FROM node:22-alpine AS release
+ 
++ARG CUSTOM_CA_CERT=custom-ca.crt
++COPY ${CUSTOM_CA_CERT} /usr/local/share/ca-certificates/custom-ca.crt
++RUN apk add --no-cache ca-certificates && update-ca-certificates
++ENV NODE_EXTRA_CA_CERTS=/usr/local/share/ca-certificates/custom-ca.crt
++RUN npm config set cafile /usr/local/share/ca-certificates/custom-ca.crt
++
+ COPY --from=builder /app/dist /app/dist
+ COPY --from=builder /app/package.json /app/package.json
+ COPY --from=builder /app/package-lock.json /app/package-lock.json
+diff --git a/src/sequentialthinking/Dockerfile b/src/sequentialthinking/Dockerfile
+index f1a8819..79aa32f 100644
+--- a/src/sequentialthinking/Dockerfile
++++ b/src/sequentialthinking/Dockerfile
+@@ -1,5 +1,11 @@
+ FROM node:22.12-alpine AS builder
+ 
++ARG CUSTOM_CA_CERT=custom-ca.crt
++COPY ${CUSTOM_CA_CERT} /usr/local/share/ca-certificates/custom-ca.crt
++RUN apk add --no-cache ca-certificates && update-ca-certificates
++ENV NODE_EXTRA_CA_CERTS=/usr/local/share/ca-certificates/custom-ca.crt
++RUN npm config set cafile /usr/local/share/ca-certificates/custom-ca.crt
++
+ COPY src/sequentialthinking /app
+ COPY tsconfig.json /tsconfig.json
+ 
+@@ -11,6 +17,12 @@ RUN --mount=type=cache,target=/root/.npm-production npm ci --ignore-scripts --om
+ 
+ FROM node:22-alpine AS release
+ 
++ARG CUSTOM_CA_CERT=custom-ca.crt
++COPY ${CUSTOM_CA_CERT} /usr/local/share/ca-certificates/custom-ca.crt
++RUN apk add --no-cache ca-certificates && update-ca-certificates
++ENV NODE_EXTRA_CA_CERTS=/usr/local/share/ca-certificates/custom-ca.crt
++RUN npm config set cafile /usr/local/share/ca-certificates/custom-ca.crt
++
+ COPY --from=builder /app/dist /app/dist
+ COPY --from=builder /app/package.json /app/package.json
+ COPY --from=builder /app/package-lock.json /app/package-lock.json
+diff --git a/src/time/Dockerfile b/src/time/Dockerfile
+index ac5f752..d381c69 100644
+--- a/src/time/Dockerfile
++++ b/src/time/Dockerfile
+@@ -1,6 +1,10 @@
+ # Use a Python image with uv pre-installed
+ FROM ghcr.io/astral-sh/uv:python3.12-bookworm-slim AS uv
+ 
++ARG CUSTOM_CA_CERT=custom-ca.crt
++COPY ${CUSTOM_CA_CERT} /usr/local/share/ca-certificates/custom-ca.crt
++RUN apt-get update && apt-get install -y ca-certificates && update-ca-certificates && rm -rf /var/lib/apt/lists/*
++
+ # Install the project into `/app`
+ WORKDIR /app
+ 
+@@ -12,18 +16,22 @@ ENV UV_LINK_MODE=copy
+ 
+ # Install the project's dependencies using the lockfile and settings
+ RUN --mount=type=cache,target=/root/.cache/uv \
+-    --mount=type=bind,source=uv.lock,target=uv.lock \
+-    --mount=type=bind,source=pyproject.toml,target=pyproject.toml \
++    --mount=type=bind,source=src/time/uv.lock,target=uv.lock \
++    --mount=type=bind,source=src/time/pyproject.toml,target=pyproject.toml \
+     uv sync --locked --no-install-project --no-dev --no-editable
+ 
+ # Then, add the rest of the project source code and install it
+ # Installing separately from its dependencies allows optimal layer caching
+-ADD . /app
++ADD src/time /app
+ RUN --mount=type=cache,target=/root/.cache/uv \
+     uv sync --locked --no-dev --no-editable
+ 
+ FROM python:3.12-slim-bookworm
+ 
++ARG CUSTOM_CA_CERT=custom-ca.crt
++COPY ${CUSTOM_CA_CERT} /usr/local/share/ca-certificates/custom-ca.crt
++RUN apt-get update && apt-get install -y ca-certificates && update-ca-certificates && rm -rf /var/lib/apt/lists/*
++
+ WORKDIR /app
+  
+ COPY --from=uv /root/.local /root/.local

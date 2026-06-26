@@ -1,0 +1,209 @@
+app:
+  name: cloud-dog-chat-client
+  prefix: CLOUD_DOG
+  logfolder: ./logs
+  server_id: "${HOSTNAME:chat-client-local}"
+
+log:
+  level: INFO
+  format: json
+  console: true
+  service_instance: "${HOSTNAME:chat-client-local}"
+  environment: "${CLOUD_DOG_ENVIRONMENT:dev}"
+  app_log: ""
+  api_server_log: "logs/api_server.log"
+  web_server_log: "logs/web_server.log"
+  mcp_server_log: "logs/mcp_server.log"
+  a2a_server_log: "logs/a2a_server.log"
+  audit_log: "logs/audit.log.jsonl"
+  rotation_max_bytes: 10485760
+  rotation_backup_count: 5
+  redaction_patterns: []
+  pii_redaction: true
+  levels:
+    httpcore: WARNING
+    httpx: WARNING
+    urllib3: WARNING
+    asyncio: WARNING
+  retention:
+    hot_days: 14
+    cold_days: 60
+    archive_format: gz
+  integrity:
+    enabled: true
+    interval_seconds: 300
+    log_file: logs/audit-integrity.log
+    hash_algorithm: sha256
+  rotation:
+    mode: size
+    max_bytes: 10485760
+    backup_count: 5
+    when: midnight
+    interval: 1
+    compress: true
+
+llm:
+  provider: ""
+  base_url: ""
+  model: ""
+  timeout_seconds: 300
+  stream: true
+  api_key: ""
+  temperature: 0.0
+  top_p: 1.0
+  top_k: 40
+  context_window: 32768
+  num_ctx: 32768
+  max_tokens: 4096
+  stop: []
+  ignore_tls: false
+  system_prompt: ""
+  include_reasoning_tags: false
+  response:
+    enforce: false
+    envelope_tag: RESPONSE
+    format: markdown
+    marker_key: MARKER
+    marker_value: ""
+    answer_key: ANSWER
+    allow_header_only: false
+    strip_for_user: true
+    show_thinking: false
+    display_answer_tag: answer
+    retry_attempts: 1
+    retry_backoff_seconds: 0.5
+
+mcp:
+  defaults:
+    timeout_seconds: 300
+    sse_path: /sse
+    messages_path: /messages
+    health_path: /health
+    api_key_header: X-API-Key
+    retry_max_attempts: 3
+    retry_backoff_seconds: 2.0
+    retry_jitter_seconds: 0.5
+    retry_on_status_codes: [408, 429, 500, 502, 503, 504]
+  servers: []
+  output:
+    format: markdown
+    max_items: 5
+    max_chars: 2000
+    max_field_chars: 300
+    fields: ["title", "url", "content", "publishedDate", "pubdate"]
+  api:
+    require_initialize: false
+    step_timeout_seconds: 60
+
+db:
+  dialect: sqlite
+  database: ./database/chat-client.db
+  url: ""
+  schema: ""
+  tenant_id: default
+  actor: chat-client
+
+jobs:
+  enabled: true
+  backend: sql
+  queue_name: default
+  payload_max_bytes: 65536
+  retry:
+    max_attempts: 3
+    initial_delay_seconds: 1.0
+    max_delay_seconds: 30.0
+  timeout:
+    run_timeout_ms: 300000
+    claim_timeout_ms: 60000
+  maintenance:
+    claim_timeout_seconds: 60
+    max_age_seconds: 86400
+  dead_letter:
+    enabled: true
+    queue_name: dead_letter
+
+client_api:
+  enabled: false
+  host: 127.0.0.1
+  port: 8050
+  base_url: ""
+  request_id_header: X-Request-Id
+  api_key_header: X-API-Key
+  api_key: ""
+  request_timeout_seconds: 300
+  ui_wait_timeout_seconds: 300
+  start_timeout_seconds: 30
+  stop_timeout_seconds: 10
+  ready_timeout_seconds: 30
+  ready_poll_seconds: 0.5
+  file_transfer:
+    fetch_timeout_seconds: 30
+    max_upload_bytes: 10485760
+    allowed_schemes: [http, https]
+
+# W28I-1218 (consumer side): outbound A2A client for the code-runner service
+# (`code.execute` skill). base_url + api_key MUST be supplied via env / mounted
+# secret (CLOUD_DOG__CODE_RUNNER__BASE_URL / CLOUD_DOG__CODE_RUNNER__API_KEY);
+# never hardcode the key here. When unset, the /tools/code-runner/execute
+# endpoint reports the misconfiguration instead of calling out.
+code_runner:
+  base_url: ""                       # e.g. https://codemcpserver0.cloud-dog.net
+  # code-runner API key is secret; set via env/secret only.
+  api_key: null
+  api_key_header: X-API-Key          # header carrying the code-runner API key
+  tasks_path: "/a2a/tasks"           # code-runner A2A tasks endpoint path
+  timeout_seconds: 60                # outbound request timeout
+  verify_tls: true                   # TLS verification for the outbound call
+  correlation_id_header: X-Correlation-Id  # propagates chat-client correlation id
+
+api_server:
+  host: 0.0.0.0
+  port: 8050
+  debug: false
+  enabled: true
+  api_key: ""
+  api_key_header: X-API-Key
+  base_path: "/v1"  # PS-92 API base path — /v1 not /api/v1 because Traefik strips /api prefix (A138). Override via env CLOUD_DOG__API_SERVER__BASE_PATH.
+
+web_server:
+  host: 0.0.0.0
+  port: 8051
+  debug: false
+  secure_cookies: false
+  enabled: true
+  api_base_url: ""
+  verify_tls: true
+  proxy_timeout: 300
+  base_path: ""  # PS-92 canonical Web base path; empty for SPA/static catch-all (W28A-970g-V2). Override via env CLOUD_DOG__WEB_SERVER__BASE_PATH.
+
+web_login:
+  username: "${CLOUD_DOG_WEB_LOGIN_USERNAME:admin}"
+  password: ""
+  # W28A-727-R5 flat-login: read-write + read-only WebUI accounts. Defaults are
+  # seeded in code (servers/web_server.py) for an out-of-the-box demo; override
+  # per environment via these keys / the matching CLOUD_DOG__WEB_LOGIN__* env vars.
+  read_write_username: "${CLOUD_DOG_WEB_LOGIN_READ_WRITE_USERNAME:read-write}"
+  read_write_password: ""
+  read_only_username: "${CLOUD_DOG_WEB_LOGIN_READ_ONLY_USERNAME:read-only}"
+  read_only_password: ""
+
+mcp_server:
+  host: 0.0.0.0
+  port: 8052
+  transport: sse
+  enabled: true
+  base_path: "/mcp"  # PS-92 canonical MCP base path (W28A-970g-V2). Override via env CLOUD_DOG__MCP_SERVER__BASE_PATH.
+
+a2a_server:
+  host: 0.0.0.0
+  port: 8053
+  enabled: true
+  base_path: "/a2a"  # PS-92 canonical A2A base path (W28A-970g-V2). Override via env CLOUD_DOG__A2A_SERVER__BASE_PATH.
+
+chat_tests:
+  fallback_news_urls:
+    - ""
+    - ""
+    - ""
+    - ""
+    - ""

@@ -1,0 +1,2 @@
+# Optional overrides (do not store secrets here)
+# This file overrides defaults.yaml. Secrets should be in private env files.
