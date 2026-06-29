@@ -1,0 +1,78 @@
+# ============================================================================
+# CLOUD-DOG CHAT CLIENT - ENVIRONMENT CONFIGURATION EXAMPLE
+# ============================================================================
+
+# Application
+CLOUD_DOG__APP__NAME=cloud-dog-chat-client
+CLOUD_DOG__APP__LOGFOLDER=./logs
+
+# LLM (Ollama default)
+CLOUD_DOG__LLM__PROVIDER=ollama
+CLOUD_DOG__LLM__BASE_URL=http://localhost:11434
+CLOUD_DOG__LLM__MODEL=qwen3:14b
+CLOUD_DOG__LLM__TIMEOUT_SECONDS=300
+CLOUD_DOG__LLM__STREAM=true
+
+# MCP (HTTP/SSE) - example single server
+# CLOUD_DOG__MCP__SERVERS__0__NAME=sql-agent
+# CLOUD_DOG__MCP__SERVERS__0__BASE_URL=http://localhost:8081
+# CLOUD_DOG__MCP__SERVERS__0__SSE_PATH=/sse
+# CLOUD_DOG__MCP__SERVERS__0__MESSAGES_PATH=/messages
+
+# Local test/api server (optional)
+# CLOUD_DOG__CLIENT_API__ENABLED=true
+# CLOUD_DOG__CLIENT_API__HOST=0.0.0.0
+# CLOUD_DOG__CLIENT_API__PORT=8090
+# CLOUD_DOG__CLIENT_API__API_KEY_HEADER=X-API-Key
+# Max UI wait/ticker duration before recovery timeout fallback (seconds)
+# CLOUD_DOG__CLIENT_API__UI_WAIT_TIMEOUT_SECONDS=300
+# No-auth mode: leave API key empty
+# CLOUD_DOG__CLIENT_API__API_KEY=
+# API-key mode: set value
+# CLOUD_DOG__CLIENT_API__API_KEY=change-me
+
+# Code-runner (W28I-1218 consumer side): outbound A2A `code.execute` client.
+# Base URL + API key are REQUIRED to enable POST {api_base}/tools/code-runner/execute.
+# Never commit the real key — supply it via this env file / mounted secret.
+# CLOUD_DOG__CODE_RUNNER__BASE_URL=https://codemcpserver0.cloud-dog.net
+# CLOUD_DOG__CODE_RUNNER__API_KEY=change-me
+# CLOUD_DOG__CODE_RUNNER__API_KEY_HEADER=X-API-Key
+# CLOUD_DOG__CODE_RUNNER__TASKS_PATH=/a2a/tasks
+# CLOUD_DOG__CODE_RUNNER__TIMEOUT_SECONDS=60
+# CLOUD_DOG__CODE_RUNNER__VERIFY_TLS=true
+# CLOUD_DOG__CODE_RUNNER__CORRELATION_ID_HEADER=X-Correlation-Id
+
+# Initial MCP profile example for sql-agent + search + file
+# SQL Agent MCP (HTTP JSON-RPC)
+# CLOUD_DOG__MCP__SERVERS__0__NAME=sql-agent-mcp
+# CLOUD_DOG__MCP__SERVERS__0__TRANSPORT=http_jsonrpc
+# CLOUD_DOG__MCP__SERVERS__0__BASE_URL=http://sql-agent-mcp:8081
+# CLOUD_DOG__MCP__SERVERS__0__MESSAGES_PATH=/messages
+# CLOUD_DOG__MCP__SERVERS__0__HEALTH_PATH=/health
+# CLOUD_DOG__MCP__SERVERS__0__API_KEY_HEADER=X-API-Key
+# CLOUD_DOG__MCP__SERVERS__0__API_KEY=
+# CLOUD_DOG__MCP__SERVERS__0__ASYNC_JOBS_ENABLED=true
+# CLOUD_DOG__MCP__SERVERS__0__ASYNC_JOBS_API_BASE_URL=http://sql-agent-api:8083
+# CLOUD_DOG__MCP__SERVERS__0__ASYNC_JOBS_STATUS_PATH=/jobs/{job_id}
+
+# Search MCP (Streamable HTTP)
+# CLOUD_DOG__MCP__SERVERS__1__NAME=search-mcp
+# CLOUD_DOG__MCP__SERVERS__1__TRANSPORT=streamable_http
+# CLOUD_DOG__MCP__SERVERS__1__BASE_URL=http://search-mcp:8000
+# CLOUD_DOG__MCP__SERVERS__1__MCP_PATH=/mcp
+
+# File MCP (Streamable HTTP)
+# CLOUD_DOG__MCP__SERVERS__2__NAME=file-mcp
+# CLOUD_DOG__MCP__SERVERS__2__TRANSPORT=streamable_http
+# CLOUD_DOG__MCP__SERVERS__2__BASE_URL=http://file-mcp:8000
+# CLOUD_DOG__MCP__SERVERS__2__MCP_PATH=/mcp
+# CLOUD_DOG__MCP__SERVERS__2__API_KEY_HEADER=Authorization
+# CLOUD_DOG__MCP__SERVERS__2__API_KEY=Bearer change-me
+
+# cloud_dog_db (W23A P3A)
+CLOUD_DOG_DB__DIALECT=sqlite
+CLOUD_DOG_DB__DATABASE=./database/chat-client.db
+CLOUD_DOG_DB__SCHEMA=
+CLOUD_DOG__DB__DIALECT=sqlite
+CLOUD_DOG__DB__DATABASE=./database/chat-client.db
+CLOUD_DOG__DB__SCHEMA=
