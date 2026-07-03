@@ -6,7 +6,7 @@ registry: service
 required: conditional
 when-applicable: "chat-client ships a React SPA at ui/dist served by the WebUI server process"
 template-last-updated: 2026-06-12
-template-owner: platform-standards
+template-owner: public-standards
 
 project: chat-client
 doc-last-updated: 2026-06-18

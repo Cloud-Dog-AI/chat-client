@@ -3,7 +3,7 @@
 # Reproducibility lock for the publishable build.
 #
 # RE-SEALED 2026-06-08 from a GREEN clean-room build of Dockerfile.public against the
-# main/local INTERNAL package index (https://pypi.cloud-dog.net/simple/), which carries
+# main/local INTERNAL package index (https://pypi.org/simple/), which carries
 # the cloud-dog platform packages. Pins are the EXACT versions resolved by that build
 # (pip freeze of the built image's runtime site-packages). PS-97 §3.3 single-index, no
 # --extra-index-url. The 861-R3 boundary is main/local; public pypi.org is downstream

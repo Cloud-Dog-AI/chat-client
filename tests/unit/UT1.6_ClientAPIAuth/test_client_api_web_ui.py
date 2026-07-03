@@ -578,9 +578,9 @@ def test_ut1_6_direct_prompt_assist_output_prefers_factual_context():
 
     file_output = _derive_direct_prompt_assist_output(
         "Search for files in the workspace",
-        "/opt/iac/Development/cloud-dog-ai/file-mcp-server/working",
+        "/path/to/cloud-dog-ai/file-mcp-server/working",
     )
-    assert "/opt/iac/Development/cloud-dog-ai/file-mcp-server/working" in file_output
+    assert "/path/to/cloud-dog-ai/file-mcp-server/working" in file_output
 
     assert _derive_direct_prompt_assist_output("Translate this", "ignored") == ""
 

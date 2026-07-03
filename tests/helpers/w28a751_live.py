@@ -22,7 +22,7 @@ class LiveResponse:
 
 
 def live_base_url() -> str:
-    return os.environ.get("CHAT_CLIENT_BMETHOD_BASE_URL", "https://chatclient0.cloud-dog.net").rstrip("/")
+    return os.environ.get("CHAT_CLIENT_BMETHOD_BASE_URL", "https://chatclient.example.com").rstrip("/")
 
 
 def credential(name: str, default: str) -> str:

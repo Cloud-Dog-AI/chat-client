@@ -6,7 +6,7 @@ registry: service
 required: must-have
 when-applicable: ""
 template-last-updated: 2026-06-12
-template-owner: platform-standards
+template-owner: public-standards
 
 project: chat-client
 doc-last-updated: 2026-06-12
@@ -22,7 +22,7 @@ doc-conformance-stamp: 2026-06-12T12:00:00Z
 > **Template version:** T-BLD v1.0 — internal from-source build instructions.
 
 ## 1. Prerequisites
-Python/Node version, system packages, internal PyPI index, Gitea boundary index, vault env.
+Python/Node version, system packages, internal PyPI index, public Git boundary index, vault env.
 
 ## 2. Build steps
 **You MUST include:** the exact commands a fresh agent runs to produce a working image.
@@ -33,7 +33,7 @@ git clone <repo>
 cd <repo>
 
 # 2. env
-source /opt/iac/.../env-vault
+source /path/to/workspace/.../env-public
 
 # 3. build
 ./docker-build.sh

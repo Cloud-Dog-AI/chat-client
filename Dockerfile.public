@@ -27,7 +27,7 @@ ENV HTTP_PROXY=${HTTP_PROXY} HTTPS_PROXY=${HTTPS_PROXY} NO_PROXY=${NO_PROXY} \
     http_proxy=${http_proxy} https_proxy=${https_proxy} no_proxy=${no_proxy}
 
 # Active package index. Default is public PyPI. The build environment may supply a
-# boundary-appropriate index instead (e.g. a Gitea public index) via this ARG or via
+# boundary-appropriate index instead (e.g. a public Git public index) via this ARG or via
 # a mounted pip.conf secret (id=pip_conf). Never hardcode an internal host here.
 ARG PIP_INDEX_URL=https://pypi.org/simple/
 

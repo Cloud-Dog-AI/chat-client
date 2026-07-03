@@ -6,7 +6,7 @@ registry: service
 required: must-have
 when-applicable: ""
 template-last-updated: 2026-06-12
-template-owner: platform-standards
+template-owner: public-standards
 
 project: chat-client
 doc-last-updated: 2026-06-12
@@ -32,7 +32,7 @@ Traefik / proxy rule references.
 Issuer, renewal, validation.
 
 ## 4. Test creds
-Reference (NOT values) to `env-vault` paths for preprod creds.
+Reference (NOT values) to `env-public` paths for preprod creds.
 
 ## 5. Known issues
 Current preprod-specific quirks.

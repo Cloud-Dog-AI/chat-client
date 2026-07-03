@@ -6,7 +6,7 @@ registry: service
 required: must-have
 when-applicable: ""
 template-last-updated: 2026-06-12
-template-owner: platform-standards
+template-owner: public-standards
 
 project: chat-client
 doc-last-updated: 2026-06-12
@@ -27,7 +27,7 @@ Container name, port, healthcheck path, network.
 ## 2. Terraform pin location
 
 ```
-/opt/iac/cloud-dog-repo/terraform/.../<NN-service>/
+/path/to/example-deploy-repo/terraform/.../<NN-service>/
 ```
 
 ## 3. Roll procedure

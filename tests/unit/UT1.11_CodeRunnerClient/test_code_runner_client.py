@@ -36,7 +36,7 @@ from cloud_dog_chat_client.clients.code_runner import (
 
 def _config() -> CodeRunnerConfig:
     return CodeRunnerConfig(
-        base_url="https://codemcpserver0.cloud-dog.net",
+        base_url="https://codemcpserver.example.com",
         api_key="test-code-runner-key",
         api_key_header="X-API-Key",
     )

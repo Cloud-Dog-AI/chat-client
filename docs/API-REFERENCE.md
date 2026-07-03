@@ -6,7 +6,7 @@ registry: service
 required: must-have
 when-applicable: ""
 template-last-updated: 2026-06-12
-template-owner: platform-standards
+template-owner: public-standards
 
 project: chat-client
 doc-last-updated: 2026-06-12
@@ -57,7 +57,7 @@ curl -H "X-API-Key: ${API_KEY}" https://<host>/api/v1/<route>
 
 ## Recovered domain content — `archive/2026-06-12/API.md` (35 lines)
 
-_This section carries forward the full content of the archived predecessor doc verbatim. Topic checklist + SHA256 chain in `cloud-dog-ai-platform-standards/working/evidence/W28C-1710a/per-doc/chat-client/API.md.topics.tsv`. Archive contents are unchanged (sha256 stable)._
+_This section carries forward the full content of the archived predecessor doc verbatim. Topic checklist + SHA256 chain in `public release checklist/working/evidence/W28C-1710a/per-doc/chat-client/API.md.topics.tsv`. Archive contents are unchanged (sha256 stable)._
 
 # API
 

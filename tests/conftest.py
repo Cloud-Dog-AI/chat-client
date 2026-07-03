@@ -186,8 +186,8 @@ def _resolve_env_value(key: str, raw_value: str) -> str:
     token = os.environ.get("VAULT_TOKEN", "").strip()
     if not addr or not token:
         pytest.exit(
-            "ERROR: unresolved Vault expression in --env file; source env-vault first:\n"
-            "set -a; source /opt/iac/Development/cloud-dog-ai/env-vault; set +a",
+            "ERROR: unresolved Vault expression in --env file; source env-public first:\n"
+            "set -a; source /path/to/cloud-dog-ai/env-public; set +a",
             returncode=2,
         )
 

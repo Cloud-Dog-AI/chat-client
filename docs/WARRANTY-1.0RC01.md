@@ -1,12 +1,12 @@
 ---
 doc-id: WARRANTY-1.0RC01
-project: /opt/iac/Development/cloud-dog-ai/chat-client
+project: /path/to/cloud-dog-ai/chat-client
 generated: 2026-06-23T09:13:32Z
 generator: scripts/build-warranty-table.py v1.0
 standard: PS-CLOSEOUT-WARRANTY v1.0
 ---
 
-# /opt/iac/Development/cloud-dog-ai/chat-client — 1.0RC01 Release Warranty Table
+# /path/to/cloud-dog-ai/chat-client — 1.0RC01 Release Warranty Table
 
 Per PS-CLOSEOUT-WARRANTY: every row must reach `verdict=PASS` before the lane may close.
 

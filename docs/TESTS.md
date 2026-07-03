@@ -25,7 +25,7 @@ The PS-95 Thread-B live tests live in:
 Run them against preprod after deployment:
 
 ```bash
-CHAT_CLIENT_BMETHOD_BASE_URL=https://chatclient0.cloud-dog.net \
+CHAT_CLIENT_BMETHOD_BASE_URL=https://chatclient.example.com \
 CHAT_CLIENT_ADMIN_USERNAME=admin \
 CHAT_CLIENT_ADMIN_PASSWORD=OrangeRiverTable \
 CHAT_CLIENT_RW_USERNAME=read-write \
@@ -74,7 +74,7 @@ Session-centric conversation orchestration that brokers LLM responses and downst
 
 ## W28E-1801C Stream-C WebUI Evidence
 - `tests/application/AT_WEBUI_E2E/test_webui_e2e.py::test_t13_cl26_chat_submit_positive_and_negative` covers CL-26 browser `/chat` submit positive and negative paths for `FR-014`.
-- Final evidence is archived under `cloud-dog-ai-platform-standards/working/evidence/W28E-1801C/current/`.
+- Final evidence is archived under `public release checklist/working/evidence/W28E-1801C/current/`.
 - CL-34 is proven by the four-sentinel post-deploy browser smoke evidence after main merge and preprod deployment.
 
 ## Standard Commands

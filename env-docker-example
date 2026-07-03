@@ -9,7 +9,7 @@
 # - Uses vault-backed expressions for credentials and external service URIs.
 #
 # Usage:
-# 1) set -a; source /opt/iac/Development/cloud-dog-ai/env-vault; set +a
+# 1) set -a; source /path/to/cloud-dog-ai/env-public; set +a
 # 2) cp env-docker-example docker/chat-client.env
 # 3) start docker compose stack
 #

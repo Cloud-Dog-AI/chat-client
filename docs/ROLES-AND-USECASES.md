@@ -6,7 +6,7 @@ registry: service
 required: must-have
 when-applicable: ""
 template-last-updated: 2026-06-12
-template-owner: platform-standards
+template-owner: public-standards
 extends-version: 1.0
 extends-via: PS-REQ-TEST-TRACE v1.0
 

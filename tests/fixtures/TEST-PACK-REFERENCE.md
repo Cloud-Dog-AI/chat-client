@@ -12,7 +12,7 @@ extends: PS-TEST-PACKS-REGISTRY v1.0
 
 ## Registry Source
 
-Central registry: `cloud-dog-ai-platform-standards/test-packs/REGISTRY.tsv`
+Central registry: `public release checklist/test-packs/REGISTRY.tsv`
 
 ## Pack Consumption
 

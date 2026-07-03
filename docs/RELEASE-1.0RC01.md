@@ -10,7 +10,7 @@ lane: W28E-1801C
 
 ## Stream-C Status
 
-W28E-1801C Stream-C closes the WebUI/E2E 1.0RC01 scope for chat-client. The authoritative release proof is recorded under `cloud-dog-ai-platform-standards/working/evidence/W28E-1801C/current/` and includes the pushed main proof, preprod deployment proof, four-sentinel browser smoke, and release tags.
+W28E-1801C Stream-C closes the WebUI/E2E 1.0RC01 scope for chat-client. The authoritative release proof is recorded under `public release checklist/working/evidence/W28E-1801C/current/` and includes the pushed main proof, preprod deployment proof, four-sentinel browser smoke, and release tags.
 
 ## Changes
 
@@ -20,7 +20,7 @@ W28E-1801C Stream-C closes the WebUI/E2E 1.0RC01 scope for chat-client. The auth
 
 ## Evidence
 
-- `cloud-dog-ai-platform-standards/working/evidence/W28E-1801C/current/local-playwright/at-webui-full-junit.xml`
-- `cloud-dog-ai-platform-standards/working/evidence/W28E-1801C/current/07-local-docker-playwright-junit.xml`
-- `cloud-dog-ai-platform-standards/working/evidence/W28E-1801C/current/10a-four-sentinel-browser-smoke.tsv`
-- `cloud-dog-ai-platform-standards/working/evidence/W28E-1801C/current/final-evidence-validator.txt`
+- `public release checklist/working/evidence/W28E-1801C/current/local-playwright/at-webui-full-junit.xml`
+- `public release checklist/working/evidence/W28E-1801C/current/07-local-docker-playwright-junit.xml`
+- `public release checklist/working/evidence/W28E-1801C/current/10a-four-sentinel-browser-smoke.tsv`
+- `public release checklist/working/evidence/W28E-1801C/current/final-evidence-validator.txt`

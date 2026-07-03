@@ -45,10 +45,10 @@ All runs must pass `--env <file>` and use real services (no stubs/mocks) for IT/
 
 ## Standard Startup Pattern
 
-Use env-vault first, then execute a single suite at a time:
+Use env-public first, then execute a single suite at a time:
 
 ```bash
-set -a; source /opt/iac/Development/cloud-dog-ai/env-vault; set +a
+set -a; source /path/to/cloud-dog-ai/env-public; set +a
 python3 -m pytest tests/<tier>/ --env tests/env-<TIER> -v --tb=short
 ```
 

@@ -34,7 +34,7 @@ CLOUD_DOG__LLM__STREAM=true
 # Code-runner (W28I-1218 consumer side): outbound A2A `code.execute` client.
 # Base URL + API key are REQUIRED to enable POST {api_base}/tools/code-runner/execute.
 # Never commit the real key — supply it via this env file / mounted secret.
-# CLOUD_DOG__CODE_RUNNER__BASE_URL=https://codemcpserver0.cloud-dog.net
+# CLOUD_DOG__CODE_RUNNER__BASE_URL=https://codemcpserver.example.com
 # CLOUD_DOG__CODE_RUNNER__API_KEY=change-me
 # CLOUD_DOG__CODE_RUNNER__API_KEY_HEADER=X-API-Key
 # CLOUD_DOG__CODE_RUNNER__TASKS_PATH=/a2a/tasks

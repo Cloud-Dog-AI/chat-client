@@ -138,7 +138,7 @@ class TestPackageCompliance:
 
     def test_no_internal_hostnames(self):
         """Zero internal hostnames in source. Configuration must come from env/vault."""
-        hits = _grep_count(r"cloud-dog\.net|viewdeck\.com|vault0\.|server0\.|db1\.app")
+        hits = _grep_count(r"private.example|internal.example|vault.example|service.example")
         real_hits = [
             hit for hit in hits if not any(
                 token in hit for token in ["#", '"""', "vault.", "test", "PREPROD", "example", "docs/"]

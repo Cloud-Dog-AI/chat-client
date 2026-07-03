@@ -27,11 +27,11 @@ COPY pyproject.toml README.md requirements.txt ./
 COPY src/ ./src/
 COPY pip.conf.docker /tmp/pip.conf.fallback
 
-ARG PYPI_URL=https://pypi.cloud-dog.net/simple/
+ARG PYPI_URL=https://pypi.org/simple/
 RUN --mount=type=secret,id=pip_conf,target=/etc/pip.conf \
     if [ ! -f /etc/pip.conf ] && [ -f /tmp/pip.conf.fallback ]; then cp /tmp/pip.conf.fallback /etc/pip.conf; fi && \
     pip install --no-cache-dir \
-      --trusted-host pypi.cloud-dog.net \
+      --trusted-host pypi.org \
       --trusted-host files.pythonhosted.org \
       . && \
     pip install --no-cache-dir \

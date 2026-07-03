@@ -147,7 +147,7 @@ client_api:
 # never hardcode the key here. When unset, the /tools/code-runner/execute
 # endpoint reports the misconfiguration instead of calling out.
 code_runner:
-  base_url: ""                       # e.g. https://codemcpserver0.cloud-dog.net
+  base_url: ""                       # e.g. https://codemcpserver.example.com
   # code-runner API key is secret; set via env/secret only.
   api_key: null
   api_key_header: X-API-Key          # header carrying the code-runner API key

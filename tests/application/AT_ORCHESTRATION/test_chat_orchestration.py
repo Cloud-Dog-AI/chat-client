@@ -993,7 +993,7 @@ async def _run_research_scenario(runtime: ConfigManager, *, keep_resources: bool
             provisioned = await _provision_orchestration_api(
                 runtime=cfg,
                 mode="research",
-                file_root=str(cfg.get("chat_tests.at1_23.file_root") or "/opt/iac/Development/cloud-dog-ai/chat-client/working/file-mcp-runtime/root").rstrip("/"),
+                file_root=str(cfg.get("chat_tests.at1_23.file_root") or "/path/to/cloud-dog-ai/chat-client/working/file-mcp-runtime/root").rstrip("/"),
                 search_url=search_url,
                 file_mcp=file_mcp,
             )
@@ -1112,7 +1112,7 @@ async def _run_file_scenario(runtime: ConfigManager) -> dict[str, Any]:
     profile_id = f"w28a294-files-{ts}"
     session_id = ""
     provisioned: dict[str, Any] | None = None
-    file_root = str(cfg.get("chat_tests.at1_23.file_root") or "/opt/iac/Development/cloud-dog-ai/chat-client/working/file-mcp-runtime/root").rstrip("/")
+    file_root = str(cfg.get("chat_tests.at1_23.file_root") or "/path/to/cloud-dog-ai/chat-client/working/file-mcp-runtime/root").rstrip("/")
 
     async with httpx.AsyncClient(
         base_url=api_base_url(cfg),
