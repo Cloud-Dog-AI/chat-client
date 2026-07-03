@@ -173,8 +173,8 @@ def test_ut_config_store_04_webui_conformance_seed_is_idempotent_and_redacted(tm
     """W28A-727: startup seed must persist admin/group/API-key metadata safely."""
     store, sessions = _fresh_store(tmp_path, "cfg_store_webui_seed")
     try:
-        first = store.ensure_webui_conformance_seed(admin_api_key="ut-local-admin-key")
-        second = store.ensure_webui_conformance_seed(admin_api_key="ut-local-admin-key")
+        first = store.ensure_webui_conformance_seed(admin_api_key="<api-key>")
+        second = store.ensure_webui_conformance_seed(admin_api_key="<api-key>")
 
         assert first == second
         assert first["user"]["user_id"] == "admin"
@@ -212,7 +212,7 @@ def test_ut_config_store_05_webui_conformance_seed_tolerates_parallel_startup(tm
         with ThreadPoolExecutor(max_workers=4) as pool:
             results = list(
                 pool.map(
-                    lambda _: store.ensure_webui_conformance_seed(admin_api_key="ut-local-admin-key"),
+                    lambda _: store.ensure_webui_conformance_seed(admin_api_key="<api-key>"),
                     range(4),
                 )
             )

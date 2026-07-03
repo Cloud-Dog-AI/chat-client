@@ -39,7 +39,7 @@ def _event(outcome: str = "success") -> AuditEvent:
         environment="test",
         severity="INFO",
         target=Target(type="resource", id="res-1", name="resource-name"),
-        details={"token": "secret-value"},
+        details={"token": "<token>"},
     )
 @pytest.mark.UT
 @pytest.mark.cli

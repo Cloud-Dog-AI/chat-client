@@ -29,13 +29,13 @@ CLOUD_DOG__LLM__STREAM=true
 # No-auth mode: leave API key empty
 # CLOUD_DOG__CLIENT_API__API_KEY=
 # API-key mode: set value
-# CLOUD_DOG__CLIENT_API__API_KEY=change-me
+# CLOUD_DOG__CLIENT_API__API_KEY=<api-key>
 
 # Code-runner (W28I-1218 consumer side): outbound A2A `code.execute` client.
 # Base URL + API key are REQUIRED to enable POST {api_base}/tools/code-runner/execute.
 # Never commit the real key — supply it via this env file / mounted secret.
 # CLOUD_DOG__CODE_RUNNER__BASE_URL=https://codemcpserver.example.com
-# CLOUD_DOG__CODE_RUNNER__API_KEY=change-me
+# CLOUD_DOG__CODE_RUNNER__API_KEY=<api-key>
 # CLOUD_DOG__CODE_RUNNER__API_KEY_HEADER=X-API-Key
 # CLOUD_DOG__CODE_RUNNER__TASKS_PATH=/a2a/tasks
 # CLOUD_DOG__CODE_RUNNER__TIMEOUT_SECONDS=60

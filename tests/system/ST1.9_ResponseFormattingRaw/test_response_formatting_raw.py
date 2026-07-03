@@ -32,7 +32,7 @@ def _require_cfg(cfg: ConfigManager, key: str):
 @pytest.fixture(scope="module", autouse=True)
 def _api_server(env_file):
     overrides = {
-        "CLOUD_DOG__CLIENT_API__API_KEY": "dev-key",
+        "CLOUD_DOG__CLIENT_API__API_KEY": "<api-key>",
         "CLOUD_DOG__CLIENT_API__API_KEY_HEADER": "X-API-Key",
         "CLOUD_DOG__LLM__SYSTEM_PROMPT": "You must respond with <thinking> and <reasoning> tags and comply with the required response envelope when instructed.",
         "CLOUD_DOG__LLM__INCLUDE_REASONING_TAGS": "true",

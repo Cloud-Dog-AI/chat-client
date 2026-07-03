@@ -95,9 +95,9 @@ def test_it2_23_mcp_proxy_tool_call_is_tracked_as_managed_job(tmp_path: Path):
             overrides={
                 "app.server_id": "it-jobs-server",
                 "client_api.api_key_header": "X-API-Key",
-                "client_api.api_key": "dev-key",
+                "client_api.api_key": "<api-key>",
                 "client_api.admin_api_key_header": "X-API-Key",
-                "client_api.admin_api_key": "dev-key",
+                "client_api.admin_api_key": "<api-key>",
                 "db.database": str(db_path),
                 "cloud_dog_db.database": str(db_path),
                 "mcp.servers.0.name": "fake-jobs-mcp",
@@ -154,9 +154,9 @@ def test_it2_23_jobs_api_denies_unauth_and_cancels_authorised_queued_job(tmp_pat
         overrides={
             "app.server_id": "it-jobs-cancel-server",
             "client_api.api_key_header": "X-API-Key",
-            "client_api.api_key": "dev-key",
+            "client_api.api_key": "<api-key>",
             "client_api.admin_api_key_header": "X-API-Key",
-            "client_api.admin_api_key": "dev-key",
+            "client_api.admin_api_key": "<api-key>",
             "db.database": str(db_path),
             "cloud_dog_db.database": str(db_path),
             "jobs.enabled": True,

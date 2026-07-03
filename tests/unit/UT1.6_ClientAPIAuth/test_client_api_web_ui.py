@@ -59,10 +59,10 @@ def test_ut1_6_api_key_login_session_creates_cookie_auth_session(env_file, monke
 
     app = web_server_module.create_app()
     with TestClient(app) as client:
-        invalid = client.post("/login/session", json={"api_key": "wrong-api-key"})
+        invalid = client.post("/login/session", json={"api_key": "<api-key>"})
         assert invalid.status_code == 401
 
-        login = client.post("/login/session", json={"api_key": "admin-api-key"})
+        login = client.post("/login/session", json={"api_key": "<api-key>"})
         assert login.status_code == 200
         assert login.cookies.get("chat_web_session")
         assert login.cookies.get("chat_client_api_key") == "admin-api-key"

@@ -83,7 +83,7 @@ def test_auth_login_get_forwards_to_spa_login(web_client) -> None:
 @pytest.mark.parametrize("page", IDAM_PAGES)
 def test_authenticated_idam_serves_spa_shell(web_client, page) -> None:
     with web_client as client:
-        login = client.post("/auth/login", json={"username": "admin", "password": "ut146-pass"})
+        login = client.post("/auth/login", json={"username": "admin", "password": "<password>"})
         assert login.status_code == 200, login.text[:200]
         resp = client.get(page)
         assert resp.status_code == 200, f"authed {page}: {resp.status_code} {resp.text[:160]}"

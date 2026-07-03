@@ -33,7 +33,7 @@ def _require_cfg(cfg: ConfigManager, key: str):
 @pytest.fixture(scope="module", autouse=True)
 def _api_server(env_file):
     overrides = {
-        "CLOUD_DOG__CLIENT_API__API_KEY": "dev-key",
+        "CLOUD_DOG__CLIENT_API__API_KEY": "<api-key>",
         "CLOUD_DOG__CLIENT_API__API_KEY_HEADER": "X-API-Key",
         # ST1.3 validates streaming endpoint behaviour; keep user-stripping disabled.
         "CLOUD_DOG__LLM__RESPONSE__STRIP_FOR_USER": "false",

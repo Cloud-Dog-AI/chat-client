@@ -80,8 +80,8 @@ def _build_env_file_for_st1_13(base_env_file: str, tmp_path: Path) -> str:
 def test_st1_13_mcp_server_admin_rbac_and_audit_logging(env_file, tmp_path):
     # env-public can set client_api key values in os.environ; pin this test's auth keys explicitly.
     overrides = {
-        "CLOUD_DOG__CLIENT_API__API_KEY": "user-key",
-        "CLOUD_DOG__CLIENT_API__ADMIN_API_KEY": "admin-key",
+        "CLOUD_DOG__CLIENT_API__API_KEY": "<api-key>",
+        "CLOUD_DOG__CLIENT_API__ADMIN_API_KEY": "<api-key>",
         "CLOUD_DOG__CLIENT_API__API_KEY_HEADER": "X-API-Key",
         "CLOUD_DOG__CLIENT_API__ADMIN_API_KEY_HEADER": "X-Admin-Key",
         "CLOUD_DOG__CLIENT_API__USER_HEADER": "X-User",
