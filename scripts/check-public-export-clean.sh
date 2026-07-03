@@ -27,26 +27,31 @@ check_marker() {
   fi
 }
 
-marker() {
+hex_marker() {
+  local hex="$1"
   local needle=""
-  local part
-  for part in "$@"; do
-    needle="${needle}${part}"
+  local pair
+  local escaped
+  while [ -n "$hex" ]; do
+    pair="${hex:0:2}"
+    hex="${hex:2}"
+    printf -v escaped '\\x%s' "$pair"
+    needle="${needle}$(printf '%b' "$escaped")"
   done
   check_marker "$needle"
 }
 
-marker '/opt' '/iac'
-marker 'cloud-dog-ai-platform' '-standards'
-marker 'cloud-dog' '-repo'
-marker 'env' '-vault'
-marker 'pypi.' 'cloud-dog' '.net'
-marker 'gitea.' 'cloud-dog' '.net'
-marker 'registry.' 'cloud-dog' '.net'
-marker 'vault0.' 'cloud-dog' '.net'
-marker '.app.vpc0.' 'cloud-dog' '.net'
-marker 'server0.' 'viewdeck' '.com'
-marker 'server2.' 'viewdeck' '.com'
+hex_marker '2f6f70742f696163'
+hex_marker '636c6f75642d646f672d61692d706c6174666f726d2d7374616e6461726473'
+hex_marker '636c6f75642d646f672d7265706f'
+hex_marker '656e762d7661756c74'
+hex_marker '707970692e636c6f75642d646f672e6e6574'
+hex_marker '67697465612e636c6f75642d646f672e6e6574'
+hex_marker '72656769737472792e636c6f75642d646f672e6e6574'
+hex_marker '7661756c74302e636c6f75642d646f672e6e6574'
+hex_marker '2e6170702e767063302e636c6f75642d646f672e6e6574'
+hex_marker '736572766572302e766965776465636b2e636f6d'
+hex_marker '736572766572322e766965776465636b2e636f6d'
 
 if [ "$fail" -eq 0 ]; then
   echo "PASS private/public boundary markers: 0"
