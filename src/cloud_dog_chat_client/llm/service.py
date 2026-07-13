@@ -120,9 +120,14 @@ class LLMService:
 
         self._base_url = base_url
 
+        # OpenRouter (and other OpenAI-compatible gateways) speak the OpenAI wire
+        # protocol, so normalise their provider names onto the openai_compat
+        # adapter. Other services accept "openrouter" or auto-detect it from the
+        # base_url; chat-client previously rejected the literal name (W28M-1624).
         self._provider_id = (
             "openai_compat"
-            if provider in ("openai", "openai_compat", "openai-compatible")
+            if provider
+            in ("openai", "openai_compat", "openai-compatible", "openrouter", "vllm")
             else provider
         )
 

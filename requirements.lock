@@ -3,8 +3,8 @@
 # Reproducibility lock for the publishable build.
 #
 # RE-SEALED 2026-06-08 from a GREEN clean-room build of Dockerfile.public against the
-# main/local INTERNAL package index (https://pypi.org/simple/), which carries
-# the cloud-dog platform packages. Pins are the EXACT versions resolved by that build
+# release-selected package index, which carries the Cloud-Dog platform packages. Pins
+# are the EXACT versions resolved by that build
 # (pip freeze of the built image's runtime site-packages). PS-97 §3.3 single-index, no
 # --extra-index-url. The 861-R3 boundary is main/local; public pypi.org is downstream
 # (W28A-862/863).
@@ -28,14 +28,14 @@
 # resolve from the active boundary index once published; pins are unchanged (host-free).
 cloud-dog-agent==0.1.0
 cloud-dog-api-kit==0.13.0
-cloud-dog-cache==0.2.0
+cloud-dog-cache==0.2.1
 cloud-dog-config==0.3.2
-cloud-dog-db==0.3.0
+cloud-dog-db==0.3.2
 cloud-dog-idam==0.5.2
-cloud-dog-jobs==0.4.1
+cloud-dog-jobs==0.4.2
 cloud-dog-llm==0.3.1
-cloud-dog-logging==0.4.0
-cloud-dog-storage==0.1.6
+cloud-dog-logging==0.4.1
+cloud-dog-storage==0.1.8
 
 # ── Third-party transitive closure (resolved from the internal index) ──
 # Full closure as actually installed in the GREEN build (includes transitive deps
@@ -72,7 +72,7 @@ pygments==2.20.0
 pyjwt==2.13.0
 pyotp==2.9.0
 python-dotenv==1.2.2
-python-multipart==0.0.20
+python-multipart==0.0.30
 pyyaml==6.0.1
 redis==8.0.0
 requests==2.34.2

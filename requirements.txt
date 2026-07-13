@@ -1,16 +1,16 @@
 # Cloud-Dog Chat Client Requirements
 
 # Core dependencies
-cloud_dog_config>=0.3.1
-cloud_dog_logging>=0.3.3
+cloud_dog_config==0.3.4
+cloud_dog_logging>=0.4.1
 cloud_dog_api_kit==0.13.0
-cloud_dog_idam>=0.5.2,<0.6
-cloud_dog_llm>=0.3.1
-cloud-dog-agent==0.2.0
+cloud_dog_idam==0.5.3
+cloud_dog_llm==0.4.0
+cloud-dog-agent==0.3.2
 cloud_dog_cache>=0.2.0
-cloud_dog_db>=0.1.0
+cloud_dog_db>=0.3.2
 cloud_dog_jobs>=0.3.0
-cloud-dog-storage>=0.1.1
+cloud-dog-storage==0.1.8
 pyyaml==6.0.1
 
 # HTTP
@@ -27,7 +27,7 @@ rich==13.9.4
 
 # Local test/api server
 fastapi==0.115.12
-python-multipart==0.0.20
+python-multipart>=0.0.30
 uvicorn[standard]==0.38.0
 hvac==2.3.0
 

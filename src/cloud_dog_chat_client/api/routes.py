@@ -38,6 +38,10 @@ from pydantic import BaseModel, ConfigDict
 from cloud_dog_logging import get_audit_logger, get_logger  # type: ignore[import-untyped]
 from cloud_dog_logging.audit_schema import AuditEvent, Actor, Target  # type: ignore[import-untyped]
 
+# Strong references to in-flight demo-report background tasks so the event loop does not
+# garbage-collect them before they complete (asyncio only keeps a weak reference).
+_DEMO_REPORT_BG_TASKS: "set" = set()
+
 from ..agent.runtime import AgentDispatchContext, dispatch_agent_message, stream_agent_message
 from ..agent.strategy import (
     SIMPLE_AGENT_STRATEGY,
@@ -74,8 +78,9 @@ from ..storage_fs import (
 )
 from .. import __version__
 from ..test_harness import TestFlowRuntime
-from ..ui_spa import serve_runtime_config, serve_spa_asset, serve_spa_index
+from ..ui_spa import build_identity, serve_runtime_config, serve_spa_asset, serve_spa_index
 from .auth import request_actor, require_admin_key, require_api_key
+from .upload_safety import ERROR_OVERSIZE, evaluate_upload
 
 if TYPE_CHECKING:
     from ..database.runtime import ChatDatabaseRuntime
@@ -145,12 +150,63 @@ class SessionSummary(BaseModel):
     session_id: str
     id: str
     created_at: Optional[str] = None
+    # CL-11 (W28E-1876): derived session time-to-live so the Web UI sessions
+    # listing can show an "Expires" column and a live remaining TTL. Both are
+    # computed from ``created_at`` + the configured idle timeout; ``None`` when
+    # ``created_at`` is missing/unparseable.
+    expires_at: Optional[str] = None
+    ttl_seconds: Optional[int] = None
     metadata: Dict[str, Any] = {}
     log_path: Optional[str] = None
 
 
 class ListSessionsResponse(BaseModel):
     sessions: list[SessionSummary] = []
+
+
+class LlmTestResponse(BaseModel):
+    """CL-30 (W28E-1876): result of the ``POST /llm/test`` model probe."""
+
+    ok: bool
+    model: str
+    provider: str
+    latency_ms: int
+    sample: str = ""
+    error: str = ""
+
+
+def compute_session_expiry(
+    created_at: Optional[str],
+    timeout_minutes: int,
+    *,
+    now: Optional[datetime] = None,
+) -> tuple[Optional[str], Optional[int]]:
+    """Derive ``(expires_at_iso, ttl_seconds)`` from a session ``created_at`` and
+    the configured session idle timeout (CL-11, W28E-1876).
+
+    Returns ``(None, None)`` when ``created_at`` is missing or unparseable so the
+    listing degrades gracefully. ``ttl_seconds`` is clamped at 0 (never negative).
+    The timeout floor of 5 minutes mirrors the Web UI SESSION_TIMEOUT_MINUTES
+    delivery in ``ui_spa.py`` so the two surfaces agree.
+    """
+    if not created_at:
+        return None, None
+    raw = str(created_at).strip()
+    if not raw:
+        return None, None
+    try:
+        parsed = datetime.fromisoformat(raw.replace("Z", "+00:00"))
+    except ValueError:
+        return None, None
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    minutes = timeout_minutes if timeout_minutes >= 5 else 5
+    expires = parsed + timedelta(minutes=minutes)
+    reference = now or datetime.now(timezone.utc)
+    if reference.tzinfo is None:
+        reference = reference.replace(tzinfo=timezone.utc)
+    ttl = int((expires - reference).total_seconds())
+    return expires.isoformat(), ttl if ttl > 0 else 0
 
 
 class MCPToolsListRequest(BaseModel):
@@ -1312,6 +1368,40 @@ def _looks_like_error_text(text: str) -> bool:
 def _direct_assist_roles() -> set[str]:
     """Return server roles that delegate the reply to an upstream expert service."""
     return {"expert", "orchestrator", "chat_backend", "expert_execute"}
+
+
+def _build_demo_report_input_text(
+    launch_template: Any, prompt: str
+) -> tuple[str, Optional[str]]:
+    """Build the expert-agent ``input_text`` for a demo-report launcher (W28M-1626).
+
+    When the profile's launcher binding declares a ``launcher_template`` (a structured
+    report spec, e.g. the versioned Country Report template), the normal chat-client
+    user-facing path must send that structured spec — with the country parsed from the
+    user prompt substituted for ``{country}`` — instead of the raw prompt, so the
+    delivered report uses the demo's declared structure/config rather than whatever the
+    expert improvises. Falls back to the raw prompt when no template is bound or on any
+    parse error. Returns ``(input_text, template_id)``.
+    """
+    if not launch_template:
+        return prompt, None
+    try:
+        tpl = (
+            launch_template
+            if isinstance(launch_template, dict)
+            else json.loads(str(launch_template))
+        )
+    except Exception:
+        return prompt, None
+    match = re.search(r"\bfor\s+([A-Za-z][A-Za-z .'\-]+?)\s*$", prompt) or re.search(
+        r"([A-Z][A-Za-z]+(?:\s+[A-Z][A-Za-z]+){0,2})\s*$", (prompt or "").strip()
+    )
+    country = match.group(1).strip() if match else None
+    spec_text = json.dumps(tpl)
+    if country:
+        spec_text = spec_text.replace("{country}", country)
+    template_id = tpl.get("template_id") if isinstance(tpl, dict) else None
+    return spec_text, template_id
 
 
 def _derive_assist_api_base_url(server_spec: Dict[str, Any]) -> str:
@@ -4302,16 +4392,40 @@ def build_router(
         """Serve the React SPA entrypoint."""
         return serve_spa_index(config)
 
+    @router.get("/mcp-console", include_in_schema=False)
+    async def mcp_console_redirect(request: Request) -> RedirectResponse:
+        target = "/developer/mcp-console"
+        if request.url.query:
+            target = f"{target}?{request.url.query}"
+        return RedirectResponse(url=target, status_code=308)
+
+    @router.get("/a2a-console", include_in_schema=False)
+    async def a2a_console_redirect(request: Request) -> RedirectResponse:
+        # W28E-1844 / PS-WEBUI-URL-CANONICAL WURL-DEV-A2A: legacy /a2a-console ->
+        # canonical /developer/a2a-console HTTP 308 (query preserved). Mirrors
+        # mcp_console_redirect so the api_server SPA front matches web_server.
+        target = "/developer/a2a-console"
+        if request.url.query:
+            target = f"{target}?{request.url.query}"
+        return RedirectResponse(url=target, status_code=308)
+
+    @router.get("/files", include_in_schema=False)
+    async def files_catalogue_redirect(request: Request) -> RedirectResponse:
+        target = "/catalogue"
+        if request.url.query:
+            target = f"{target}?{request.url.query}"
+        return RedirectResponse(url=target, status_code=308)
+
     @router.get("/login", response_class=HTMLResponse, include_in_schema=False)
     @router.get("/dashboard", response_class=HTMLResponse, include_in_schema=False)
     @router.get("/docs", response_class=HTMLResponse, include_in_schema=False)
     @router.get("/api-docs", response_class=HTMLResponse, include_in_schema=False)
+    @router.get("/developer/mcp-console", response_class=HTMLResponse, include_in_schema=False)
+    @router.get("/developer/a2a-console", response_class=HTMLResponse, include_in_schema=False)
     @router.get("/-docs", response_class=HTMLResponse, include_in_schema=False)
     @router.get("/jobs", response_class=HTMLResponse, include_in_schema=False)
-    @router.get("/mcp-console", response_class=HTMLResponse, include_in_schema=False)
-    @router.get("/a2a-console", response_class=HTMLResponse, include_in_schema=False)
     @router.get("/monitoring", response_class=HTMLResponse, include_in_schema=False)
-    @router.get("/files", response_class=HTMLResponse, include_in_schema=False)
+    @router.get("/catalogue", response_class=HTMLResponse, include_in_schema=False)
     async def web_ui_routes() -> HTMLResponse:
         """Serve direct SPA routes that do not overlap backend API paths."""
         return serve_spa_index(config)
@@ -4372,7 +4486,14 @@ def build_router(
 
     @router.get("/version")
     async def version_info() -> Dict[str, Any]:
-        """Expose application version metadata for the Web UI shell."""
+        """Expose application version metadata for the Web UI shell.
+
+        W28E-1863 fix-wave-d (WSC-014 / PS-30 UI-R7.3): also surface the container
+        build's source commit + build date (config-routed via ``build_identity``,
+        git-HEAD fallback for a dev/source run) so the shared @cloud-dog/shell
+        AboutPage can render build provenance, not just the version string.
+        """
+        _build = build_identity(config)
         return {
             "application": str(config.get("app.name") or "cloud-dog-chat-client"),
             "version": _application_release(config),
@@ -4382,6 +4503,12 @@ def build_router(
                 or config.get("log.service_instance")
                 or "chat-client"
             ),
+            "source_commit": _build["source_commit"],
+            "source_branch": _build["source_branch"],
+            "build_date": _build["build_date"],
+            "container_digest": _build["container_digest"],
+            # legacy field name any VersionInfo consumer may already read
+            "commit": _build["source_commit"],
         }
 
     @router.get("/metrics", dependencies=[Depends(_auth_dep)])
@@ -4636,6 +4763,19 @@ def build_router(
             session_id=session_id, events_count=len(session["events"])
         )
 
+    def _session_timeout_minutes() -> int:
+        """Configured session idle timeout in minutes (CL-11, W28E-1876), mirroring
+        the ``ui_spa.py`` SESSION_TIMEOUT_MINUTES resolution (default 30, floor 5)."""
+        try:
+            minutes = int(
+                config.get("session.timeout_minutes")
+                or config.get("session_timeout_minutes")
+                or 30
+            )
+        except (TypeError, ValueError):
+            minutes = 30
+        return minutes if minutes >= 5 else 5
+
     # Covers: R16.4 (session list endpoint used by Web UI contract)
     @router.get(
         "/sessions",
@@ -4650,12 +4790,22 @@ def build_router(
         retained for one release cycle so existing ``id`` consumers keep working
         during migration (see CHANGELOG.md).
         """
+        timeout_minutes = _session_timeout_minutes()
         converged: list[Dict[str, Any]] = []
         for row in sessions.list_sessions():
             item = dict(row)
             sid = str(item.get("session_id") or item.get("id") or "")
             item["session_id"] = sid  # canonical
             item.setdefault("id", sid)  # deprecated alias (one release cycle)
+            # CL-11 (W28E-1876): surface derived TTL so the sessions listing can
+            # render an "Expires" column and the dashboard tile can click through
+            # to it. Never overwrites a store-provided value.
+            expires_at, ttl_seconds = compute_session_expiry(
+                item.get("created_at"), timeout_minutes
+            )
+            if expires_at is not None:
+                item.setdefault("expires_at", expires_at)
+                item.setdefault("ttl_seconds", ttl_seconds)
             converged.append(item)
         return {"sessions": converged}
 
@@ -4706,6 +4856,45 @@ def build_router(
             events=recent,
             events_count=len(all_events),
         )
+
+    # Covers: CL-30 (W28E-1876) — LLM/model reachability test action for /chat.
+    @router.post("/llm/test", dependencies=[Depends(_auth_dep)])
+    async def llm_test() -> LlmTestResponse:
+        """Run a minimal completion against the configured provider/model and
+        report success, the resolved provider/model, round-trip latency, and a
+        short sample. Lets the /chat UI verify the model actually responds before
+        a real conversation instead of only sending a full message. Any provider
+        failure is returned as ``ok=false`` with a short error, not a 500, so the
+        UI can render an inline result either way."""
+        provider = str(config.get("llm.provider") or "")
+        model = str(config.get("llm.model") or "")
+        started = time.monotonic()
+        try:
+            llm = LLMService(
+                _llm_config_for_session(""),
+                response_policy_enforce=False,
+            )
+            result = await llm.complete(
+                [ChatMessage(role="user", content="Reply with the single word: OK")]
+            )
+            latency_ms = int((time.monotonic() - started) * 1000)
+            sample = str(getattr(result, "content", "") or "").strip()[:120]
+            return LlmTestResponse(
+                ok=True,
+                model=model,
+                provider=provider,
+                latency_ms=latency_ms,
+                sample=sample,
+            )
+        except Exception as exc:  # noqa: BLE001 — surface any provider error to the UI
+            latency_ms = int((time.monotonic() - started) * 1000)
+            return LlmTestResponse(
+                ok=False,
+                model=model,
+                provider=provider,
+                latency_ms=latency_ms,
+                error=str(exc)[:200],
+            )
 
     # Covers: R16.4 (session delete endpoint used by Web UI contract)
     @router.delete("/sessions/{session_id}", dependencies=[Depends(_auth_dep)])
@@ -4920,6 +5109,132 @@ def build_router(
             TranscriptEvent(event_type="user_message", data={"content": req.content}),
         )
         _maybe_auto_title_session(session_id, req.content)
+
+        # --- Demo launcher: async report job -------------------------------------------------
+        # A generated report takes minutes but a chat request cannot block that long. When the
+        # session's profile carries an expert binding that opts in with ``launcher_document: true``,
+        # run the report as a BACKGROUND job and reply immediately with a pollable job id; the
+        # report's web-view link is appended to the session (and the job result) when it is ready.
+        # Guarded: only triggers for that opt-in binding, so normal chat / other profiles are
+        # completely unaffected.
+        try:
+            _launch_binding = None
+            for _spec in (_session_server_specs(session_id) or []):
+                if (
+                    isinstance(_spec, dict)
+                    and _spec.get("launcher_document")
+                    and str(_spec.get("assist_role") or "").strip().lower() == "expert_execute"
+                ):
+                    _launch_binding = _spec
+                    break
+        except Exception:
+            _launch_binding = None
+        if _launch_binding is not None and jobs_runtime is not None and _jobs_enabled():
+            _lb = _launch_binding
+            _exp_base = str(_lb.get("assist_api_base_url") or "").rstrip("/")
+            _exp_id = _lb.get("assist_expert_config_id") or _lb.get("assist_expert_id")
+            _exp_key_header = str(_lb.get("api_key_header") or "X-API-Key")
+            _exp_key = str(_lb.get("api_key") or "")
+            _exp_verify = bool(
+                _lb.get("assist_verify_tls")
+                if _lb.get("assist_verify_tls") is not None
+                else True
+            )
+            _msg_base = str(
+                _lb.get("launcher_messages_base_url")
+                or config.get("notification.base_url", "")
+            ).rstrip("/")
+            _prompt = req.content
+            # W28M-1626: when the binding declares a document template the normal
+            # chat-client launcher must build the expert payload FROM that template
+            # (config-driven), not from the raw user prompt — so the user-facing path
+            # actually consumes the demo's versioned report structure.
+            _launch_template = _lb.get("launcher_template")
+            _job_id = jobs_runtime.create_job(
+                job_type="demo_report",
+                payload={"prompt": _prompt[:500], "expert_id": _exp_id, "server_id": _server_id()},
+                session_id=session_id,
+                user_id=_jobs_user_id(),
+            )
+            jobs_runtime.mark_running(_job_id, worker_id="demo-launcher")
+
+            async def _run_demo_report(job_id: str, prompt: str) -> None:
+                import re as _re
+
+                try:
+                    _input_text, _template_id = _build_demo_report_input_text(
+                        _launch_template, prompt
+                    )
+                    payload = {
+                        "input_text": _input_text,
+                        "parameters": {
+                            "agent_strategy": "document",
+                            "max_wall_time_seconds": 2400,
+                            "persist_session": False,
+                        },
+                    }
+                    async with httpx.AsyncClient(
+                        timeout=2600.0,
+                        verify=_exp_verify,
+                        headers={_exp_key_header: _exp_key},
+                    ) as _client:
+                        _resp = await _client.post(
+                            f"{_exp_base}/experts/{_exp_id}/execute", json=payload
+                        )
+                    if _resp.status_code != 200:
+                        raise RuntimeError(f"expert execute HTTP {_resp.status_code}")
+                    try:
+                        _body = _resp.json()
+                        _out = str(_body.get("output_text") or _body.get("content") or "")
+                    except Exception:
+                        _out = _resp.text
+                    _mid_m = _re.search(r"['\"]?message_id['\"]?\s*[:=]\s*(\d+)", _out)
+                    _mid = _mid_m.group(1) if _mid_m else None
+                    _link = f"{_msg_base}/messages/{_mid}" if _mid else None
+                    _summary = _out.split("{")[0].strip() or "Report generated and delivered."
+                    _reply = "✅ " + _summary + (
+                        f"\n\nView the report: {_link}" if _link else "\n\n(Delivered to your inbox.)"
+                    )
+                    jobs_runtime.complete(
+                        job_id,
+                        result={"link": _link, "message_id": _mid, "summary": _summary, "reply": _reply},
+                    )
+                    try:
+                        sessions.append_event(
+                            session_id,
+                            TranscriptEvent(event_type="assistant_message", data={"content": _reply}),
+                        )
+                    except Exception:
+                        pass
+                except Exception as _exc:  # noqa: BLE001 — surface any failure to the job + session
+                    try:
+                        jobs_runtime.fail(job_id, error=str(_exc)[:300], retryable=False)
+                    except Exception:
+                        pass
+                    try:
+                        sessions.append_event(
+                            session_id,
+                            TranscriptEvent(
+                                event_type="assistant_message",
+                                data={"content": f"⚠️ Report generation failed: {str(_exc)[:200]}"},
+                            ),
+                        )
+                    except Exception:
+                        pass
+
+            _bg_task = asyncio.create_task(_run_demo_report(_job_id, _prompt))
+            _DEMO_REPORT_BG_TASKS.add(_bg_task)
+            _bg_task.add_done_callback(_DEMO_REPORT_BG_TASKS.discard)
+            _ack = (
+                f"\U0001f680 Generating your report now — this takes a few minutes. "
+                f"Job `{_job_id}`. The report link will appear here when it's ready "
+                f"(or poll GET /v1/jobs/{_job_id})."
+            )
+            sessions.append_event(
+                session_id,
+                TranscriptEvent(event_type="assistant_message", data={"content": _ack}),
+            )
+            return SendMessageResponse(session_id=session_id, content=_ack)
 
         llm_config = _llm_config_for_session(session_id)
         llm = LLMService(
@@ -5162,6 +5477,12 @@ def build_router(
                 stream_agent_message(_agent_dispatch_context(session_id, req, llm)),
                 media_type="application/jsonl",
             )
+        policy = llm.response_policy
+        if policy.strip_for_user:
+            raise HTTPException(
+                status_code=400,
+                detail="streaming is not supported when response formatting is enabled",
+            )
         resolved_template = await _resolve_template_prompt(req)
         messages = _build_messages(
             session_id, req, resolved_template=resolved_template
@@ -5311,13 +5632,6 @@ def build_router(
                     ),
                 )
             )
-        policy = llm.response_policy
-        if policy.strip_for_user:
-            raise HTTPException(
-                status_code=400,
-                detail="streaming is not supported when response formatting is enabled",
-            )
-
         async def gen():
             """Handle gen for the current runtime context."""
             assistant_text = ""
@@ -6098,6 +6412,67 @@ def build_router(
         finally:
             await connection.close()
 
+    def _request_tenant_id(request: Request) -> str:
+        """Resolve the tenant for the current request (state -> config default)."""
+        state_tenant = str(getattr(request.state, "tenant_id", "") or "").strip()
+        if state_tenant:
+            return state_tenant
+        return str(config.get("db.tenant_id") or "default").strip() or "default"
+
+    def _emit_webui_action(
+        request: Request,
+        *,
+        action: str,
+        outcome: str,
+        target_type: str,
+        target_id: str,
+        details: dict[str, Any] | None = None,
+        severity: str = "INFO",
+    ) -> None:
+        """Emit a PS-AUDIT-LOG `webui.action` event for a WebUI-triggered op (D6).
+
+        Carries the 7 NIST SP 800-53 AU-3 components: event type, timestamp
+        (set by AuditEvent), actor identity, target, action, outcome, and source
+        location (ip + request/correlation id). Best-effort: audit emission never
+        breaks the user operation.
+        """
+        try:
+            actor_id = str(request_actor(config, request) or "").strip() or "anonymous"
+            correlation_id = _request_correlation_id(request)
+            request_id = str(getattr(request.state, "request_id", "") or "").strip() or correlation_id
+            source_ip = _request_user_ip(request)
+            event_details = dict(details or {})
+            # Source location (AU-3 #7): ip + request/correlation id are carried on
+            # the event; the ip is also folded into details for the WebUI surface.
+            event_details.setdefault("source_ip", source_ip)
+            event_details.setdefault("component", "webui")
+            audit_logger.emit(
+                AuditEvent(
+                    event_type="webui.action",
+                    actor=Actor(
+                        type="user",
+                        id=actor_id,
+                        ip=source_ip,
+                        user_agent=str(request.headers.get("user-agent") or "") or None,
+                    ),
+                    action=action,
+                    outcome=outcome,
+                    correlation_id=correlation_id,
+                    request_id=request_id,
+                    trace_id=correlation_id,
+                    service=str(config.get("app.name") or "chat-client"),
+                    environment=str(config.get("app.environment") or "unknown"),
+                    severity=severity,
+                    target=Target(type=target_type, id=target_id),
+                    details=event_details,
+                )
+            )
+        except Exception:  # pragma: no cover - audit must never break the op
+            try:
+                admin_logger.warning(f"webui.action audit emit failed for {action}")
+            except Exception:
+                pass
+
     @router.post(
         "/sessions/{session_id}/mcp/files/upload",
         response_model=MCPFileUploadResponse,
@@ -6141,6 +6516,7 @@ def build_router(
         dependencies=[Depends(_auth_dep)],
     )
     async def mcp_file_upload_multipart(
+        request: Request,
         session_id: str,
         path: str = Form(...),
         file: UploadFile = File(...),
@@ -6150,14 +6526,67 @@ def build_router(
         dry_run: bool = Form(False),
         require_initialize: Optional[bool] = Form(None),
     ) -> MCPFileUploadResponse:
-        """Handle multipart file upload for the current runtime context."""
+        """Handle multipart file upload for the current runtime context.
+
+        W28F-948 D4/D5/D6: enforce the per-media-type edge upload-size policy
+        (operator-tunable per tenant), reject oversize with a structured
+        CSR-025 error, and emit a PS-AUDIT-LOG ``webui.action`` event. Durable
+        cumulative per-tenant quota + virus scanning are delegated to file-mcp
+        per PS-94 FT-07 (this service is a proxy-relay).
+        """
         raw_bytes = await file.read()
         max_upload_bytes, _, _ = _file_transfer_limits()
+        tenant_id = _request_tenant_id(request)
         if not raw_bytes:
+            _emit_webui_action(
+                request,
+                action="file.upload",
+                outcome="failure",
+                target_type="file",
+                target_id=path,
+                details={"reason": "empty", "tenant_id": tenant_id},
+                severity="WARN",
+            )
             raise HTTPException(status_code=400, detail="multipart file content must be non-empty")
-        if len(raw_bytes) > max_upload_bytes:
-            raise HTTPException(status_code=413, detail="Upload exceeds max upload size")
-        return await _execute_file_upload(
+
+        decision = evaluate_upload(
+            filename=file.filename,
+            content_type=file.content_type,
+            size_bytes=len(raw_bytes),
+            tenant_id=tenant_id,
+            config_block=config.get("client_api.file_transfer.multimodal") or {},
+            base_max_bytes=max_upload_bytes,
+        )
+        if not decision.allowed:
+            _emit_webui_action(
+                request,
+                action="file.upload",
+                outcome="denied",
+                target_type="file",
+                target_id=path,
+                details={
+                    "tenant_id": tenant_id,
+                    "media_type": decision.media_type,
+                    "size_bytes": decision.size_bytes,
+                    "max_bytes": decision.max_bytes,
+                    "error_code": decision.error_code,
+                },
+                severity="SECURITY",
+            )
+            raise HTTPException(
+                status_code=413,
+                detail={
+                    "error_code": decision.error_code,
+                    # The stable error code is embedded in the message so it
+                    # survives the platform error-envelope reshaping (CSR-025/033).
+                    "message": f"{decision.error_code}: {decision.message}",
+                    "media_type": decision.media_type,
+                    "max_bytes": decision.max_bytes,
+                    "size_bytes": decision.size_bytes,
+                },
+            )
+
+        result = await _execute_file_upload(
             session_id,
             path=path,
             content_bytes=raw_bytes,
@@ -6169,6 +6598,20 @@ def build_router(
             require_initialize=require_initialize,
             source_kind="multipart",
         )
+        _emit_webui_action(
+            request,
+            action="file.upload",
+            outcome="success",
+            target_type="file",
+            target_id=path,
+            details={
+                "tenant_id": tenant_id,
+                "media_type": decision.media_type,
+                "size_bytes": decision.size_bytes,
+                "dry_run": bool(dry_run),
+            },
+        )
+        return result
 
     @router.post(
         "/sessions/{session_id}/mcp/files/download",
@@ -6198,6 +6641,7 @@ def build_router(
         dependencies=[Depends(_auth_dep)],
     )
     async def mcp_file_download_content(
+        request: Request,
         session_id: str,
         path: str,
         server_index: Optional[int] = None,
@@ -6220,6 +6664,19 @@ def build_router(
             "Content-Disposition": f'attachment; filename="{filename}"',
             "X-MCP-Server-Index": str(response_model.mcp_server_index if response_model.mcp_server_index is not None else ""),
         }
+        # W28F-948 D6: PS-AUDIT-LOG webui.action per download.
+        _emit_webui_action(
+            request,
+            action="file.download",
+            outcome="success",
+            target_type="file",
+            target_id=response_model.path,
+            details={
+                "tenant_id": _request_tenant_id(request),
+                "filename": filename,
+                "byte_size": len(file_bytes),
+            },
+        )
         return StreamingResponse(iter([file_bytes]), media_type=media_type, headers=headers)
 
     @router.post(

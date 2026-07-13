@@ -139,6 +139,9 @@ def strip_reasoning_tags(content: str) -> str:
         end = content.find("</reasoning>", start)
         if end > start:
             return content[start:end]
+    if "<think>" in content and "</think>" in content:
+        close = content.find("</think>") + len("</think>")
+        return content[close:]
     return content
 
 
@@ -147,6 +150,11 @@ def extract_thinking(content: str) -> str:
     if "<thinking>" in content and "</thinking>" in content:
         start = content.find("<thinking>") + len("<thinking>")
         end = content.find("</thinking>", start)
+        if end > start:
+            return content[start:end].strip()
+    if "<think>" in content and "</think>" in content:
+        start = content.find("<think>") + len("<think>")
+        end = content.find("</think>", start)
         if end > start:
             return content[start:end].strip()
     return ""

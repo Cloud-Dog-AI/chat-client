@@ -1,5 +1,0 @@
-[global]
-extra-index-url = https://pypi.org/simple/
-trusted-host = pypi.org
-               pypi.org
-               files.pythonhosted.org

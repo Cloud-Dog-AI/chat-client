@@ -27,7 +27,7 @@ ENV HTTP_PROXY=${HTTP_PROXY} HTTPS_PROXY=${HTTPS_PROXY} NO_PROXY=${NO_PROXY} \
     http_proxy=${http_proxy} https_proxy=${https_proxy} no_proxy=${no_proxy}
 
 # Active package index. Default is public PyPI. The build environment may supply a
-# boundary-appropriate index instead (e.g. a public Git public index) via this ARG or via
+# boundary-appropriate single index instead via this ARG or via
 # a mounted pip.conf secret (id=pip_conf). Never hardcode an internal host here.
 ARG PIP_INDEX_URL=https://pypi.org/simple/
 
@@ -44,7 +44,7 @@ COPY pyproject.toml README.md requirements.txt ./
 COPY src/ ./src/
 
 # If a pip.conf secret is mounted, it takes precedence (it may set index-url to a
-# boundary index). Otherwise the public PIP_INDEX_URL ARG is used. No --extra-index-url
+# boundary index). Otherwise the public PIP_INDEX_URL ARG is used. No secondary index
 # is ever used (PS-97 §3.3, §4 anti-pattern).
 #
 # NOTE: BuildKit auto-promotes the `ARG PIP_INDEX_URL` into the RUN environment, and
@@ -53,13 +53,14 @@ COPY src/ ./src/
 # default (public PyPI) silently overrides the mounted boundary index. Index-agnostic:
 # no host is hardcoded here.
 RUN --mount=type=secret,id=pip_conf,target=/etc/pip.conf \
+    set -e; \
     if [ -f /etc/pip.conf ]; then \
       unset PIP_INDEX_URL && \
       pip install --no-cache-dir . && \
-      pip install --no-cache-dir python-multipart==0.0.20 ; \
+      pip install --no-cache-dir python-multipart==0.0.20 && \
     else \
       pip install --no-cache-dir --index-url "${PIP_INDEX_URL}" . && \
-      pip install --no-cache-dir --index-url "${PIP_INDEX_URL}" python-multipart==0.0.20 ; \
+      pip install --no-cache-dir --index-url "${PIP_INDEX_URL}" python-multipart==0.0.20 && \
     fi
 
 # ── Final ────────────────────────────────────────────────────────

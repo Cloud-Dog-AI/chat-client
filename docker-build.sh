@@ -200,7 +200,23 @@ if [[ "${VARIANT}" == "dev" ]]; then
   SECRET_ARGS+=( --secret id=ca_bundle,src="${CA_BUNDLE_FILE}" )
 fi
 
+# ── W28C-1719 publish-before-pin guard (fail-closed; blocks build on unpublished internal pin) ──
+_PBP_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
+"${_PBP_DIR}/scripts/publish-before-pin-guard.sh" "${_PBP_DIR}" || exit $?
+
+_PBP_REV="$(git -C "$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)" rev-parse HEAD 2>/dev/null || echo unknown)"
+# W28E-1863 fix-wave-d (WSC-014): propagate build identity to the image so the
+# Dockerfile can stamp OCI labels + runtime ENV for build_identity() / /version.
+SOURCE_COMMIT="${_PBP_REV}"
+SOURCE_BRANCH="$(git -C "${_PBP_DIR}" rev-parse --abbrev-ref HEAD 2>/dev/null || echo unknown)"
+BUILD_DATE="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+BUILD_ARGS+=(
+  --build-arg SOURCE_COMMIT="${SOURCE_COMMIT}"
+  --build-arg SOURCE_BRANCH="${SOURCE_BRANCH}"
+  --build-arg BUILD_DATE="${BUILD_DATE}"
+)
 DOCKER_BUILDKIT=1 docker buildx build \
+  --label "org.opencontainers.image.revision=${_PBP_REV}" \
   --progress=plain \
   --network=host \
   --load \

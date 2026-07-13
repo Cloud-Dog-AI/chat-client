@@ -25,7 +25,14 @@ from ..api.auth import (
     _try_resolve_principal as resolve_api_key_principal,
     principal_has_admin_capability as has_permission,  # PS-70 UM3 RBAC
 )
-from ..ui_spa import is_spa_entry_path, serve_runtime_config, serve_spa_asset, serve_spa_index
+from ..ui_spa import (
+    is_spa_document_navigation,
+    is_spa_entry_path,
+    serve_runtime_config,
+    serve_spa_asset,
+    serve_spa_icon,
+    serve_spa_index,
+)
 from .web_flat_roles import (
     ADMIN_ROLE as FLAT_ADMIN_ROLE,
     READ_ONLY_ROLE as FLAT_READ_ONLY_ROLE,
@@ -111,6 +118,15 @@ def create_app():
     for mw in app.user_middleware:
         if mw.cls is TimeoutMiddleware:
             mw.kwargs["timeout_seconds"] = timeout
+
+    @app.middleware("http")
+    async def canonical_api_docs_alias_redirects(request: Request, call_next):
+        if request.method in ("GET", "HEAD") and request.url.path in {"/api-docs", "/docs", "/openapi"}:
+            target = "/developer/api-docs"
+            if request.url.query:
+                target = f"{target}?{request.url.query}"
+            return RedirectResponse(target, status_code=308)
+        return await call_next(request)
 
     def _health_payload() -> dict[str, Any]:
         return {
@@ -299,6 +315,20 @@ def create_app():
     async def root() -> RedirectResponse:
         return RedirectResponse(url="/ui", status_code=307)
 
+    @app.get("/mcp-console", include_in_schema=False)
+    async def mcp_console_redirect(request: Request) -> RedirectResponse:
+        target = "/developer/mcp-console"
+        if request.url.query:
+            target = f"{target}?{request.url.query}"
+        return RedirectResponse(url=target, status_code=308)
+
+    @app.get("/files", include_in_schema=False)
+    async def files_catalogue_redirect(request: Request) -> RedirectResponse:
+        target = "/catalogue"
+        if request.url.query:
+            target = f"{target}?{request.url.query}"
+        return RedirectResponse(url=target, status_code=308)
+
     @app.get("/runtime-config.js", include_in_schema=False)
     async def runtime_config_js(request: Request) -> Response:
         return serve_runtime_config(cfg, request)
@@ -307,6 +337,40 @@ def create_app():
     async def ui_assets(asset_path: str) -> Response:
         return serve_spa_asset(cfg, f"assets/{asset_path}")
 
+    @app.get("/favicon.ico", include_in_schema=False)
+    @app.get("/apple-touch-icon.png", include_in_schema=False)
+    @app.get("/apple-touch-icon-precomposed.png", include_in_schema=False)
+    async def ui_icons(request: Request) -> Response:
+        return serve_spa_icon(cfg, request.url.path)
+
+    @app.get("/api-docs", include_in_schema=False)
+    @app.get("/docs", include_in_schema=False)
+    @app.get("/openapi", include_in_schema=False)
+    async def api_docs_legacy_alias(request: Request) -> RedirectResponse:
+        target = "/developer/api-docs"
+        if request.url.query:
+            target = f"{target}?{request.url.query}"
+        return RedirectResponse(target, status_code=308)
+
+    @app.get("/jobs", include_in_schema=False)
+    async def jobs_legacy_alias(request: Request) -> RedirectResponse:
+        # PS-WEBUI-URL-CANONICAL WURL-002 / PS-76 JW13.1: legacy /jobs -> canonical
+        # /system/jobs as a deterministic HTTP 308, preserving the query string (WURL-010).
+        target = "/system/jobs"
+        if request.url.query:
+            target = f"{target}?{request.url.query}"
+        return RedirectResponse(target, status_code=308)
+
+    @app.get("/a2a-console", include_in_schema=False)
+    async def a2a_console_legacy_alias(request: Request) -> RedirectResponse:
+        # PS-WEBUI-URL-CANONICAL WURL-DEV-A2A / PS-72 §11 (W28E-1844): legacy
+        # /a2a-console -> canonical /developer/a2a-console as a deterministic HTTP
+        # 308, preserving the query string (WURL-010). Mirrors mcp_console_redirect.
+        target = "/developer/a2a-console"
+        if request.url.query:
+            target = f"{target}?{request.url.query}"
+        return RedirectResponse(target, status_code=308)
+
     @app.get("/index.html", response_class=HTMLResponse, include_in_schema=False)
     @app.get("/login", response_class=HTMLResponse, include_in_schema=False)
     @app.get("/ui", response_class=HTMLResponse, include_in_schema=False)
@@ -314,21 +378,21 @@ def create_app():
     @app.get("/chat", response_class=HTMLResponse, include_in_schema=False)
     @app.get("/sessions", response_class=HTMLResponse, include_in_schema=False)
     @app.get("/profiles", response_class=HTMLResponse, include_in_schema=False)
+    @app.get("/source-connections", response_class=HTMLResponse, include_in_schema=False)
     @app.get("/mcp-servers", response_class=HTMLResponse, include_in_schema=False)
     @app.get("/tools", response_class=HTMLResponse, include_in_schema=False)
-    @app.get("/docs", response_class=HTMLResponse, include_in_schema=False)
-    @app.get("/api-docs", response_class=HTMLResponse, include_in_schema=False)
-    @app.get("/jobs", response_class=HTMLResponse, include_in_schema=False)
+    @app.get("/developer/api-docs", response_class=HTMLResponse, include_in_schema=False)
+    @app.get("/developer/mcp-console", response_class=HTMLResponse, include_in_schema=False)
+    @app.get("/developer/a2a-console", response_class=HTMLResponse, include_in_schema=False)
+    @app.get("/system/jobs", response_class=HTMLResponse, include_in_schema=False)
     @app.get("/settings", response_class=HTMLResponse, include_in_schema=False)
     @app.get("/admin", response_class=HTMLResponse, include_in_schema=False)
     @app.get("/admin/rbac", response_class=HTMLResponse, include_in_schema=False)
     @app.get("/admin/users", response_class=HTMLResponse, include_in_schema=False)
     @app.get("/admin/groups", response_class=HTMLResponse, include_in_schema=False)
     @app.get("/admin/api-keys", response_class=HTMLResponse, include_in_schema=False)
-    @app.get("/mcp-console", response_class=HTMLResponse, include_in_schema=False)
-    @app.get("/a2a-console", response_class=HTMLResponse, include_in_schema=False)
-    @app.get("/monitoring", response_class=HTMLResponse, include_in_schema=False)
-    @app.get("/files", response_class=HTMLResponse, include_in_schema=False)
+    @app.get("/audit-log", response_class=HTMLResponse, include_in_schema=False)
+    @app.get("/catalogue", response_class=HTMLResponse, include_in_schema=False)
     async def spa_entry(request: Request) -> HTMLResponse:
         if request.url.path == "/sessions":
             sec_fetch_dest = str(request.headers.get("sec-fetch-dest") or "").strip().lower()
@@ -340,10 +404,15 @@ def create_app():
             return HTMLResponse("Not Found", status_code=404)
         return serve_spa_index(cfg)
 
-    @app.get("/api-docs", include_in_schema=False)
-    async def api_docs_redirect() -> RedirectResponse:
-        """Redirect compatibility docs checks to the SPA docs route."""
-        return RedirectResponse(url="/docs", status_code=307)
+    @app.get("/diagnostics-audit", include_in_schema=False)
+    @app.get("/observability", include_in_schema=False)
+    @app.get("/logs", include_in_schema=False)
+    @app.get("/monitoring", include_in_schema=False)
+    async def audit_log_alias(request: Request) -> RedirectResponse:
+        target = "/audit-log"
+        if request.url.query:
+            target = f"{target}?{request.url.query}"
+        return RedirectResponse(target, status_code=308)
 
     # CC6 (W28C-1703 / 1601-C): explicit /idam/* SPA routes (OPT-B). W28A-876
     # mounted the /api/v1 IDAM routes and the SPA wires /idam/{users,groups,roles,
@@ -366,6 +435,12 @@ def create_app():
                 url=f"/auth/login?next={request.url.path}", status_code=302
             )
         return serve_spa_index(cfg)
+
+    @app.get("/ui/config", include_in_schema=False)
+    @app.get("/ui/config/tree", include_in_schema=False)
+    async def ui_config_proxy(request: Request) -> Response:
+        """Proxy runtime config JSON routes before SPA deep-link fallback."""
+        return await _proxy_upstream(request.url.path.lstrip("/"), request)
 
     # WebApiProxy from cloud_dog_api_kit for standard API proxying (W28A-849).
     from cloud_dog_api_kit.web.proxy import WebApiProxy as _WebApiProxy
@@ -660,6 +735,19 @@ def create_app():
                         "role": FLAT_READ_ONLY_ROLE,
                     },
                 )
+        # CC-401 (W28E-1863): SPA deep-link fallback of last resort. A browser
+        # hard-navigation / refresh / bookmark of a React history route that is
+        # NOT in the enumerated allowlist (e.g. /system/settings, /system/about,
+        # /about, /research) previously fell through to the API proxy below and
+        # returned a raw 401/404 JSON body instead of the SPA shell. Serve
+        # index.html for any GET/HEAD document navigation to a non-reserved path
+        # so React renders the requested route — or, for an anonymous visitor, its
+        # own login gate — instead of leaking an API error. API / MCP / A2A /
+        # health / auth / asset paths remain reserved and are proxied unchanged
+        # (see is_spa_document_navigation). This matches the sql-agent / search-mcp
+        # catch-all pattern and AGENT-LESSONS §2.4.
+        if request.method in {"GET", "HEAD"} and is_spa_document_navigation(path):
+            return serve_spa_index(cfg)
         return await _proxy_upstream(path, request)
 
     return app

@@ -140,6 +140,22 @@ client_api:
     fetch_timeout_seconds: 30
     max_upload_bytes: 10485760
     allowed_schemes: [http, https]
+    # W28F-948 D4/D5: per-media-type edge upload-size policy for multimodal
+    # uploads (image/video/audio/PDF). Operator-tunable; per-tenant overrides
+    # may be supplied here or via Vault-bound config. The chat-client is a
+    # PS-94 proxy-relay: the authoritative cumulative per-tenant quota and
+    # virus scanning are owned by file-mcp (FT-07). Values are bytes.
+    multimodal:
+      max_bytes:
+        image: 52428800       # 50 MB
+        video: 524288000      # 500 MB
+        audio: 104857600      # 100 MB
+        pdf: 52428800         # 50 MB
+      # Example per-tenant override (operator-tunable / Vault-bound):
+      # tenants:
+      #   acme:
+      #     max_bytes:
+      #       video: 1073741824   # 1 GB for tenant "acme"
 
 # W28I-1218 (consumer side): outbound A2A client for the code-runner service
 # (`code.execute` skill). base_url + api_key MUST be supplied via env / mounted
@@ -147,7 +163,7 @@ client_api:
 # never hardcode the key here. When unset, the /tools/code-runner/execute
 # endpoint reports the misconfiguration instead of calling out.
 code_runner:
-  base_url: ""                       # e.g. https://codemcpserver.example.com
+  base_url: ""                       # e.g. https://<code-runner-host>.example.com
   # code-runner API key is secret; set via env/secret only.
   api_key: null
   api_key_header: X-API-Key          # header carrying the code-runner API key

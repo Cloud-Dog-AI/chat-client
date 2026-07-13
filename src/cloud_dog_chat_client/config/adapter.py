@@ -217,6 +217,13 @@ class ConfigManager:
                     return False
             return value
         except (KeyError, IndexError, TypeError, ValueError):
+            if path == "client_api.api_key_required":
+                try:
+                    client_api = self._config_dict.get("client_api", {})
+                    if isinstance(client_api, dict):
+                        return bool(str(client_api.get("api_key") or "").strip())
+                except Exception:
+                    pass
             return default
 
     def get_all(self) -> Dict[str, Any]:

@@ -49,7 +49,7 @@ The public image is built with the `public` variant (the default):
 ./docker-build.sh latest --variant public
 ```
 
-To point at a different boundary index (e.g. a public Git public index) without baking
+To point at a different boundary index (e.g. a Gitea public index) without baking
 an internal host into the image, supply it at build time:
 
 ```bash

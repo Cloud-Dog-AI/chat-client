@@ -19,7 +19,7 @@ PUBLICATION_TAG_SUFFIX=github-test ./docker-build.sh latest --variant public
 
 See [EXTERNAL-BUILD.md](EXTERNAL-BUILD.md) for the full external-builder guide.
 
-Run the local smoke by executing the shell block in [PUBLICATION-SMOKE.md](PUBLICATION-SMOKE.md) with `TAG=latest-public-test`.
+Run the local smoke by executing the shell block in [PUBLICATION-SMOKE.md](PUBLICATION-SMOKE.md) with `TAG=latest-gitea-test`.
 
 The smoke run uses [env-example](env-example) and probes:
 
@@ -56,18 +56,18 @@ schema (`/openapi.json` → `components.securitySchemes.ApiKeyAuth` /
 ```bash
 # User-scope read (single key):
 curl -sS -k -H "X-API-Key: <user-key>" \
-  https://chatclient.example.com/api/v1/users
+  https://<chat-client-host>.example.com/api/v1/users
 
 # Admin-scope mutation (BOTH keys required):
 curl -sS -k \
   -H "X-API-Key: <user-key>" \
   -H "X-Admin-Key: <admin-key>" \
-  -X POST https://chatclient.example.com/api/v1/users \
+  -X POST https://<chat-client-host>.example.com/api/v1/users \
   -d '{"username": "alice", "role": "user"}'
 
 # Only one header -> 401 naming both:
 curl -sS -k -H "X-Admin-Key: <admin-key>" \
-  -X POST https://chatclient.example.com/api/v1/users -d '{}'
+  -X POST https://<chat-client-host>.example.com/api/v1/users -d '{}'
 # {"ok":false,"errors":[{"code":"UNAUTHENTICATED",
 #   "message":"This endpoint requires X-API-Key (user creds) AND X-Admin-Key (admin scope) headers"}]}
 ```
