@@ -59,6 +59,13 @@ llm:
   ignore_tls: false
   system_prompt: ""
   include_reasoning_tags: false
+  reasoning:
+    enabled: false
+    budget: null
+    output: false
+  openrouter:
+    http_referer: "https://cloud-dog.net"
+    x_title: "Cloud-Dog AI Chat"
   response:
     enforce: false
     envelope_tag: RESPONSE
@@ -94,6 +101,7 @@ mcp:
   api:
     require_initialize: false
     step_timeout_seconds: 60
+    health_timeout_seconds: 10
 
 db:
   dialect: sqlite
@@ -195,9 +203,8 @@ web_server:
 web_login:
   username: "${CLOUD_DOG_WEB_LOGIN_USERNAME:admin}"
   password: ""
-  # W28A-727-R5 flat-login: read-write + read-only WebUI accounts. Defaults are
-  # seeded in code (servers/web_server.py) for an out-of-the-box demo; override
-  # per environment via these keys / the matching CLOUD_DOG__WEB_LOGIN__* env vars.
+  # W28A-727-R5 flat-login: every password is required from the active
+  # configuration/Vault boundary. No operational password is seeded in code.
   read_write_username: "${CLOUD_DOG_WEB_LOGIN_READ_WRITE_USERNAME:read-write}"
   read_write_password: ""
   read_only_username: "${CLOUD_DOG_WEB_LOGIN_READ_ONLY_USERNAME:read-only}"

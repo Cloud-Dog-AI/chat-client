@@ -1,3 +1,9 @@
+---
+template-id: T-RME
+template-version: 1.0
+applies-to: README.md
+---
+
 # Cloud-Dog Chat Client
 
 `chat-client` exposes the Cloud-Dog chat API, Web UI, MCP bridge, and A2A health surface.
@@ -7,7 +13,7 @@
 Prerequisites:
 
 - Docker 24 or newer with BuildKit enabled
-- Python 3.12 if you run the package locally
+- Python 3.13.14 or newer 3.13.x if you run the package locally
 - Network access to a Python package index serving the dependencies in
   `requirements.lock` (default: public PyPI, `https://pypi.org/simple/`)
 
@@ -31,10 +37,11 @@ The smoke run uses [env-example](env-example) and probes:
 ## Local Development
 
 ```bash
-python3 -m venv .venv
+python3.13 -m venv .venv
 .venv/bin/pip install --upgrade pip setuptools wheel
-# Single index only (PS-97 §3.3). Override the URL for your boundary index.
+# Cloud-Dog development uses its one approved package boundary only.
 .venv/bin/pip install --index-url https://pypi.org/simple/ -e ".[dev]"
+.venv/bin/python -c 'import sys; assert sys.version_info[:2] == (3, 13)'
 ```
 
 Runtime configuration is loaded from the env file passed to `server_control.sh`, then from shell environment variables, then from `defaults.yaml`.

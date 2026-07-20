@@ -249,6 +249,7 @@ def create_app():
         version="1",
         description="Cloud-Dog chat-client MCP tool surface",
         enable_request_logging=True,
+        enable_health=False,
         register_signal_handlers_on_startup=False,
         enable_audit_logging=False,
     )

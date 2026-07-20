@@ -36,10 +36,14 @@ class ConformanceToolCase:
 @dataclass
 class ConformanceServer:
     timeout_seconds: Optional[float] = None
+    read_timeout_seconds: Optional[float] = None
     verify_tls: Optional[bool] = None
     api_key_header: Optional[str] = None
     api_key: Optional[str] = None
+    auth_bearer_token: Optional[str] = None
     accept_header: Optional[str] = None
+    sse_accept_header: Optional[str] = None
+    enable_sse: Optional[bool] = None
 
     base_url: Optional[str] = None
     mcp_path: Optional[str] = None
@@ -180,6 +184,11 @@ def _parse_server(
         )
     timeout_seconds = float(timeout_raw)
 
+    read_timeout_raw = raw.get("read_timeout_seconds")
+    read_timeout_seconds = (
+        float(read_timeout_raw) if read_timeout_raw is not None else None
+    )
+
     verify_tls_raw = (
         raw.get("verify_tls")
         if raw.get("verify_tls") is not None
@@ -195,15 +204,31 @@ def _parse_server(
         raw.get("api_key_header") or defaults.get("api_key_header") or ""
     ).strip()
     api_key: Optional[str] = str(raw.get("api_key") or "").strip()
+    auth_bearer_token: Optional[str] = str(
+        raw.get("auth_bearer_token") or ""
+    ).strip()
     accept_header: Optional[str] = str(
         raw.get("accept_header") or defaults.get("accept_header") or ""
     ).strip()
+    sse_accept_header: Optional[str] = str(
+        raw.get("sse_accept_header") or defaults.get("sse_accept_header") or ""
+    ).strip()
+    enable_sse_raw = (
+        raw.get("enable_sse")
+        if raw.get("enable_sse") is not None
+        else defaults.get("enable_sse")
+    )
+    enable_sse = bool(enable_sse_raw) if enable_sse_raw is not None else None
     if not api_key_header:
         api_key_header = None
     if not api_key:
         api_key = None
+    if not auth_bearer_token:
+        auth_bearer_token = None
     if not accept_header:
         accept_header = None
+    if not sse_accept_header:
+        sse_accept_header = None
 
     tools_call_raw = raw.get("tools_call")
     tools_call = (
@@ -270,10 +295,14 @@ def _parse_server(
 
     return ConformanceServer(
         timeout_seconds=timeout_seconds,
+        read_timeout_seconds=read_timeout_seconds,
         verify_tls=verify_tls,
         api_key_header=api_key_header,
         api_key=api_key,
+        auth_bearer_token=auth_bearer_token,
         accept_header=accept_header,
+        sse_accept_header=sse_accept_header,
+        enable_sse=enable_sse,
         base_url=base_url,
         mcp_path=mcp_path,
         messages_path=messages_path,

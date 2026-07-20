@@ -17,6 +17,7 @@ from __future__ import annotations
 import asyncio
 import base64
 import copy
+import gzip
 import hashlib
 import json
 import mimetypes
@@ -37,10 +38,6 @@ from pydantic import BaseModel, ConfigDict
 
 from cloud_dog_logging import get_audit_logger, get_logger  # type: ignore[import-untyped]
 from cloud_dog_logging.audit_schema import AuditEvent, Actor, Target  # type: ignore[import-untyped]
-
-# Strong references to in-flight demo-report background tasks so the event loop does not
-# garbage-collect them before they complete (asyncio only keeps a weak reference).
-_DEMO_REPORT_BG_TASKS: "set" = set()
 
 from ..agent.runtime import AgentDispatchContext, dispatch_agent_message, stream_agent_message
 from ..agent.strategy import (
@@ -72,6 +69,7 @@ from ..storage_fs import (
     join_path,
     list_dir as storage_list_dir,
     path_exists,
+    read_bytes,
     read_text,
     resolve_path,
     storage_for_root,
@@ -79,12 +77,21 @@ from ..storage_fs import (
 from .. import __version__
 from ..test_harness import TestFlowRuntime
 from ..ui_spa import build_identity, serve_runtime_config, serve_spa_asset, serve_spa_index
-from .auth import request_actor, require_admin_key, require_api_key
-from .upload_safety import ERROR_OVERSIZE, evaluate_upload
+from .auth import (
+    principal_has_admin_capability,
+    request_actor,
+    require_admin_key,
+    require_api_key,
+)
+from .upload_safety import evaluate_upload
 
 if TYPE_CHECKING:
     from ..database.runtime import ChatDatabaseRuntime
     from ..jobs import JobsRuntime
+
+# Strong references to in-flight demo-report background tasks so the event loop does not
+# garbage-collect them before they complete (asyncio only keeps a weak reference).
+_DEMO_REPORT_BG_TASKS: set = set()
 
 _REDACTED_VALUE = "***REDACTED***"
 _PROCESS_START_MONOTONIC = time.monotonic()
@@ -211,11 +218,13 @@ def compute_session_expiry(
 
 class MCPToolsListRequest(BaseModel):
     server_index: int = 0
+    server: Optional[Dict[str, Any]] = None
     require_initialize: Optional[bool] = None
 
 
 class MCPToolsCallRequest(BaseModel):
     server_index: int = 0
+    server: Optional[Dict[str, Any]] = None
     name: str
     arguments: Dict[str, Any] = {}
     require_initialize: Optional[bool] = None
@@ -249,6 +258,7 @@ class MCPTerminateRequest(BaseModel):
     protocol_version: Optional[str] = None
     verify_method: Optional[str] = None
     verify_params: Optional[Dict[str, Any]] = None
+    verify_expect_failure: Optional[bool] = None
 
 
 class MCPOAuthTokenRequest(BaseModel):
@@ -1060,9 +1070,14 @@ def _build_imap_tool_call(
 def _extract_imap_subject(prompt_text: str) -> str:
     """Extract a subject keyword from the prompt for IMAP SUBJECT search."""
     prompt_lc = str(prompt_text or "").lower()
-    match = re.search(r'subject\s+(?:containing\s+|")?(\w[\w-]*)', prompt_lc)
-    if match:
-        return match.group(1)
+    for pattern in (
+        r'subject\s+containing\s+["\']?([\w-]+)',
+        r'subject\s+["\']([^"\']+)["\']',
+        r'subject\s*[:=]\s*["\']?([\w-]+)',
+    ):
+        match = re.search(pattern, prompt_lc)
+        if match:
+            return match.group(1).strip()
     for kw in ("fail2ban", "alert", "cron", "logwatch"):
         if kw in prompt_lc:
             return kw
@@ -1292,7 +1307,7 @@ def _derive_direct_prompt_assist_output(prompt_text: str, mcp_context: str) -> s
     if _is_file_workspace_prompt(prompt_text):
         return raw
     if _is_email_lookup_prompt(prompt_text):
-        return ""  # Let LLM process email results into a user-readable answer
+        return raw
     return ""
 
 
@@ -1642,11 +1657,9 @@ def build_router(
     # CLOUD_DOG__API_SERVER__BASE_PATH / CLOUD_DOG__MCP_SERVER__BASE_PATH /
     # CLOUD_DOG__A2A_SERVER__BASE_PATH. The /v1 prefix is the canonical default
     # (was /api/v1 before A138; Traefik strips /api so API server receives /v1).
-    # LEGACY_API_BASE_PATH kept for backwards-compat reference. See 970c-V2 precedent.
     api_base_path = str(config.get("api_server.base_path") or "/v1").rstrip("/") or "/v1"
     mcp_base_path = str(config.get("mcp_server.base_path") or "/mcp").rstrip("/") or "/mcp"
     a2a_base_path = str(config.get("a2a_server.base_path") or "/a2a").rstrip("/") or "/a2a"
-    LEGACY_API_BASE_PATH = "/v1"  # noqa: N806 — external-contract constant (A138 — was /api/v1 pre-Traefik-strip fix)
 
     def _server_id() -> str:
         return str(
@@ -1994,7 +2007,16 @@ def build_router(
     def _available_log_surfaces() -> list[dict[str, str]]:
         return [{"id": item["id"], "label": item["label"]} for item in _log_surface_specs()]
 
-    def _resolve_audit_log_path() -> str:
+    def _resolve_audit_log_paths() -> list[str]:
+        """Return active and rotated audit streams in the configured log folder.
+
+        The platform audit sink rotates ``audit.log.jsonl`` while requests are
+        active.  Reading only the active file creates a correctness gap where a
+        just-emitted event can disappear from the WebUI between the write and
+        the next read.  Include every numbered/plain or compressed rotation and
+        de-duplicate the candidates so the explorer remains continuous across
+        a rotation boundary.
+        """
         log_folder = resolve_path(
             str(config.get("app.logfolder") or config.get("log.folder") or "logs"),
             base_dir=str(config.project_root),
@@ -2005,13 +2027,33 @@ def build_router(
         ]
         if path_exists(log_folder):
             for entry in storage_list_dir(log_folder, "/"):
-                if entry.is_dir or not str(entry.path).endswith(".audit.jsonl"):
+                if entry.is_dir:
                     continue
-                candidates.append(join_path(log_folder, str(entry.path).lstrip("/")))
+                entry_name = file_name(str(entry.path))
+                if not re.fullmatch(
+                    r"(?:audit\.log|.+\.audit)\.jsonl(?:\.\d+)?(?:\.gz)?",
+                    entry_name,
+                ):
+                    continue
+                candidates.append(join_path(log_folder, entry_name))
+        resolved: list[str] = []
         for candidate in candidates:
-            if path_exists(candidate) and read_text(candidate, encoding="utf-8").strip():
-                return candidate
-        return ""
+            if candidate in resolved or not path_exists(candidate):
+                continue
+            resolved.append(candidate)
+        return resolved
+
+    def _read_log_lines(source_path: str) -> list[str]:
+        """Read an active or gzip-rotated log without bypassing cloud-dog-storage."""
+        try:
+            raw = read_bytes(source_path)
+            if source_path.endswith(".gz"):
+                raw = gzip.decompress(raw)
+            return raw.decode("utf-8", errors="replace").splitlines()
+        except (OSError, EOFError, gzip.BadGzipFile):
+            # A rotation can replace/compress a candidate between listing and
+            # reading.  The next request will see the completed archive.
+            return []
 
     def _resolve_runtime_log_path(surface: str) -> str:
         app_log_folder = resolve_path(
@@ -2259,65 +2301,82 @@ def build_router(
         if surface_id not in specs:
             raise HTTPException(status_code=400, detail=f"Unsupported log surface: {surface}")
 
-        source_path = (
-            _resolve_audit_log_path() if surface_id == "audit" else _resolve_runtime_log_path(surface_id)
+        source_paths = (
+            _resolve_audit_log_paths()
+            if surface_id == "audit"
+            else [_resolve_runtime_log_path(surface_id)]
         )
-        if not source_path or not path_exists(source_path):
+        source_paths = [path for path in source_paths if path and path_exists(path)]
+        if not source_paths:
             return {
                 "entries": [],
                 "count": 0,
                 "surface": surface_id,
                 "surface_label": specs[surface_id],
-                "source_path": source_path,
+                "source_path": "",
+                "source_paths": [],
                 "available_surfaces": _available_log_surfaces(),
             }
 
-        lines = read_text(source_path, encoding="utf-8").splitlines()
         entries: list[dict[str, Any]] = []
-        for index, raw_line in enumerate(lines[-max(1, int(limit)):], start=1):
-            line = raw_line.strip()
-            if not line:
-                continue
-            try:
-                payload = json.loads(line)
-            except json.JSONDecodeError:
-                entries.append(
-                    _parse_plain_log_line(
-                        line=line,
-                        surface=surface_id,
-                        surface_label=specs[surface_id],
-                        source_path=source_path,
-                        index=index,
+        seen_payloads: set[str] = set()
+        for source_path in source_paths:
+            lines = _read_log_lines(source_path)
+            for index, raw_line in enumerate(lines[-max(1, int(limit)):], start=1):
+                line = raw_line.strip()
+                if not line:
+                    continue
+                try:
+                    payload = json.loads(line)
+                except json.JSONDecodeError:
+                    entries.append(
+                        _parse_plain_log_line(
+                            line=line,
+                            surface=surface_id,
+                            surface_label=specs[surface_id],
+                            source_path=source_path,
+                            index=index,
+                        )
                     )
+                    continue
+                if not isinstance(payload, dict):
+                    continue
+                payload_key = json.dumps(
+                    payload,
+                    ensure_ascii=True,
+                    sort_keys=True,
+                    separators=(",", ":"),
+                    default=str,
                 )
-                continue
-            if not isinstance(payload, dict):
-                continue
-            if surface_id == "audit":
-                entries.append(
-                    _normalize_audit_log_entry(
-                        payload=payload,
-                        source_path=source_path,
-                        index=index,
+                if payload_key in seen_payloads:
+                    continue
+                seen_payloads.add(payload_key)
+                if surface_id == "audit":
+                    entries.append(
+                        _normalize_audit_log_entry(
+                            payload=payload,
+                            source_path=source_path,
+                            index=index,
+                        )
                     )
-                )
-            else:
-                entries.append(
-                    _normalize_runtime_log_entry(
-                        payload=payload,
-                        surface=surface_id,
-                        surface_label=specs[surface_id],
-                        source_path=source_path,
-                        index=index,
+                else:
+                    entries.append(
+                        _normalize_runtime_log_entry(
+                            payload=payload,
+                            surface=surface_id,
+                            surface_label=specs[surface_id],
+                            source_path=source_path,
+                            index=index,
+                        )
                     )
-                )
         entries.sort(key=lambda item: str(item.get("timestamp") or ""))
         return {
             "entries": entries[-max(1, int(limit)):],
             "count": len(entries),
             "surface": surface_id,
             "surface_label": specs[surface_id],
-            "source_path": source_path,
+            "source_path": source_paths[0],
+            "source_paths": source_paths,
             "available_surfaces": _available_log_surfaces(),
         }
 
@@ -2677,6 +2736,8 @@ def build_router(
                 suite = ""
 
         marker = ""
+        if not suite:
+            return content
         if suite.startswith("at1.1"):
             if system_prompt is not None:
                 marker = str(config.get("chat_tests.expected_override_marker") or "").strip()
@@ -2687,10 +2748,6 @@ def build_router(
         elif suite in {"at1.5", "at1.13", "at1.14"}:
             marker = str(config.get("chat_tests.searchmcp_marker") or "").strip()
 
-        if not marker:
-            marker = str(config.get("chat_tests.expected_default_marker") or "").strip()
-        if not marker:
-            marker = str(config.get("chat_tests.sqlagent_marker") or "").strip()
         if not marker:
             return content
 
@@ -3997,7 +4054,7 @@ def build_router(
 
     def _connection_from_server_spec(server_spec: Dict[str, Any]):
         """Internal helper to connection from server spec for this module."""
-        from ..mcp.connection import MCPConnection, MCPServerSpec
+        from ..mcp.connection import MCPConnection, MCPServerSpec, normalize_http_endpoint
         from cloud_dog_api_kit.mcp.client_transport import (
             HTTPJSONRPCConfig,
             HTTPJSONRPCTransport,
@@ -4032,6 +4089,7 @@ def build_router(
             mcp_path = str(
                 server_spec.get("mcp_path") or defaults.get("mcp_path") or "/mcp"
             )
+            base_url, mcp_path = normalize_http_endpoint(base_url, mcp_path)
             api_key_header: Optional[str] = str(
                 server_spec.get("api_key_header")
                 or defaults.get("api_key_header")
@@ -4333,37 +4391,76 @@ def build_router(
 
     # Health endpoints are now provided by create_health_router() in server.py.
 
+    def _jobs_principal(request: Request) -> tuple[str, bool]:
+        principal = getattr(request.state, "principal", {}) or {}
+        user_id = str(principal.get("user_id") or principal.get("actor") or "").strip()
+        return user_id, principal_has_admin_capability(principal)
+
+    def _job_owner(job: Dict[str, Any]) -> str:
+        payload = job.get("payload") if isinstance(job.get("payload"), dict) else {}
+        return str(
+            job.get("user_id")
+            or payload.get("request_auth_identity")
+            or payload.get("user_id")
+            or ""
+        ).strip()
+
+    def _require_job_access(request: Request, job: Dict[str, Any]) -> tuple[str, bool]:
+        user_id, is_admin = _jobs_principal(request)
+        if not is_admin and (not user_id or _job_owner(job) != user_id):
+            raise HTTPException(status_code=403, detail="Job belongs to another user")
+        return user_id, is_admin
+
     @router.get(f"{api_base_path}/jobs", dependencies=[Depends(_auth_dep)])
     async def list_jobs(
+        request: Request,
         limit: int = 100,
         session_id: Optional[str] = None,
         status: Optional[str] = None,
     ) -> Dict[str, Any]:
         """Return managed MCP/chat jobs for this server instance."""
+        user_id, is_admin = _jobs_principal(request)
         if jobs_runtime is None:
-            return {"jobs": [], "server_id": _server_id(), "count": 0}
-        jobs = jobs_runtime.list_jobs(limit=limit, session_id=session_id, status=status)
+            return {
+                "jobs": [],
+                "server_id": _server_id(),
+                "count": 0,
+                "is_admin": is_admin,
+            }
+        # Apply ownership before the caller's requested limit so a busy shared
+        # queue cannot hide a non-admin user's jobs behind other users' rows.
+        jobs = jobs_runtime.list_jobs(limit=500, session_id=session_id, status=status)
+        if not is_admin:
+            jobs = [job for job in jobs if user_id and _job_owner(job) == user_id]
+        bounded = max(1, min(int(limit or 100), 500))
+        jobs = jobs[:bounded]
         return {
             "jobs": jobs,
             "count": len(jobs),
             "server_id": _server_id(),
+            "is_admin": is_admin,
         }
 
     @router.get(f"{api_base_path}/jobs/{{job_id}}", dependencies=[Depends(_auth_dep)])
-    async def get_job(job_id: str) -> Dict[str, Any]:
+    async def get_job(request: Request, job_id: str) -> Dict[str, Any]:
         """Return one managed job by identifier."""
         if jobs_runtime is None:
             raise HTTPException(status_code=404, detail="Unknown job")
         job = jobs_runtime.get_job(job_id)
         if job is None:
             raise HTTPException(status_code=404, detail="Unknown job")
+        _require_job_access(request, job)
         return job
 
     @router.post(f"{api_base_path}/jobs/{{job_id}}/cancel", dependencies=[Depends(_auth_dep)])
-    async def cancel_job(job_id: str, reason: str = "") -> Dict[str, Any]:
+    async def cancel_job(request: Request, job_id: str, reason: str = "") -> Dict[str, Any]:
         """Cancel a running or queued job (PS-75 JQ8.4 cooperative cancellation)."""
         if jobs_runtime is None:
             raise HTTPException(status_code=404, detail="Unknown job")
+        job = jobs_runtime.get_job(job_id)
+        if job is None:
+            raise HTTPException(status_code=404, detail="Unknown job")
+        _require_job_access(request, job)
         try:
             ok = jobs_runtime.cancel(job_id, reason=reason)
         except KeyError:
@@ -4371,6 +4468,34 @@ def build_router(
         if not ok:
             raise HTTPException(status_code=409, detail="Job cannot be cancelled in its current state")
         return {"job_id": job_id, "status": "cancelled"}
+
+    @router.post(f"{api_base_path}/jobs/{{job_id}}/retry", dependencies=[Depends(_auth_dep)])
+    async def retry_job(request: Request, job_id: str) -> Dict[str, Any]:
+        """Return an owned retryable job to the durable queue."""
+        if jobs_runtime is None:
+            raise HTTPException(status_code=404, detail="Unknown job")
+        job = jobs_runtime.get_job(job_id)
+        if job is None:
+            raise HTTPException(status_code=404, detail="Unknown job")
+        _require_job_access(request, job)
+        if not jobs_runtime.retry(job_id):
+            raise HTTPException(status_code=409, detail="Job cannot be retried in its current state")
+        return {"job_id": job_id, "status": "queued"}
+
+    @router.delete(f"{api_base_path}/jobs/{{job_id}}", dependencies=[Depends(_auth_dep)])
+    async def delete_job(request: Request, job_id: str) -> Dict[str, Any]:
+        """Delete a terminal job; destructive deletion is admin-only."""
+        if jobs_runtime is None:
+            raise HTTPException(status_code=404, detail="Unknown job")
+        job = jobs_runtime.get_job(job_id)
+        if job is None:
+            raise HTTPException(status_code=404, detail="Unknown job")
+        _, is_admin = _require_job_access(request, job)
+        if not is_admin:
+            raise HTTPException(status_code=403, detail="Admin permission required")
+        if not jobs_runtime.delete(job_id):
+            raise HTTPException(status_code=409, detail="Only terminal jobs can be deleted")
+        return {"job_id": job_id, "status": "deleted"}
 
     # Covers: R16.1 (browser route entrypoint for Web UI surface)
     @router.get("/", include_in_schema=False)
@@ -4441,7 +4566,8 @@ def build_router(
         return serve_spa_asset(config, f"assets/{asset_path}")
 
     # Covers: R16.2 (runtime config contract exposed to browser UI)
-    @router.get("/ui/config")
+    @router.get(f"{api_base_path}/ui/config", dependencies=[Depends(_auth_dep)])
+    @router.get("/ui/config", dependencies=[Depends(_auth_dep)])
     async def ui_config() -> Dict[str, Any]:
         """Handle ui config for the current runtime context."""
         ui_wait_timeout_seconds = config.get("client_api.ui_wait_timeout_seconds")
@@ -4596,13 +4722,15 @@ def build_router(
             "logs": logs[-150:],
         }
 
+    @router.get(f"{api_base_path}/ui/logs", dependencies=[Depends(_auth_dep)])
     @router.get("/ui/logs", dependencies=[Depends(_auth_dep)])
     async def ui_logs(surface: str = "audit", limit: int = 100) -> Dict[str, Any]:
         """Return source-aware log rows for the shared WebUI log explorer."""
         return _load_log_surface_entries(surface=surface, limit=max(1, min(int(limit), 500)))
 
     # Covers: R16.7 (redacted settings/config visibility in UI)
-    @router.get("/ui/config/tree")
+    @router.get(f"{api_base_path}/ui/config/tree", dependencies=[Depends(_auth_dep)])
+    @router.get("/ui/config/tree", dependencies=[Depends(_auth_dep)])
     async def ui_config_tree() -> Dict[str, Any]:
         """Handle ui config tree for the current runtime context."""
         return {
@@ -4611,6 +4739,32 @@ def build_router(
             },
             "config": _redact_config_tree(config.get_all()),
         }
+
+    @router.get(f"{api_base_path}/ui/config/sources", dependencies=[Depends(_auth_dep)])
+    @router.get("/ui/config/sources", dependencies=[Depends(_auth_dep)])
+    async def ui_config_sources() -> Dict[str, Any]:
+        """Return value-free source, secret, and server metadata for every leaf."""
+        return config.get_provenance()
+
+    @router.post(
+        f"{api_base_path}/ui/config/audit-reveal",
+        dependencies=[Depends(_admin_auth_dep)],
+    )
+    @router.post(
+        "/ui/config/audit-reveal",
+        dependencies=[Depends(_admin_auth_dep)],
+    )
+    async def ui_config_audit_reveal(request: Request) -> Dict[str, bool]:
+        """Record an administrator's explicit Settings secret-reveal action."""
+        _emit_webui_action(
+            request,
+            action="settings_secret_reveal",
+            outcome="success",
+            target_type="configuration",
+            target_id="effective-config",
+            details={"scope": "settings", "values_included": False},
+        )
+        return {"audited": True}
 
     # Covers: R16.4 (backend API contract for MCP server inventory)
     @router.get(f"{mcp_base_path}/servers", dependencies=[Depends(_auth_dep)])
@@ -4623,9 +4777,49 @@ def build_router(
     async def mcp_servers_health() -> Dict[str, Any]:
         """Handle MCP servers health for the current runtime context."""
         servers = _current_mcp_servers_for_ui()
-        statuses: list[Dict[str, Any]] = []
-        for i in range(len(servers)):
-            statuses.append(await _probe_mcp_server(i))
+        timeout_raw = config.get("mcp.api.health_timeout_seconds")
+        if timeout_raw is None:
+            raise HTTPException(
+                status_code=500,
+                detail="mcp.api.health_timeout_seconds is required",
+            )
+        try:
+            health_timeout_seconds = float(timeout_raw)
+        except (TypeError, ValueError) as exc:
+            raise HTTPException(
+                status_code=500,
+                detail="mcp.api.health_timeout_seconds must be a positive number",
+            ) from exc
+        if health_timeout_seconds <= 0:
+            raise HTTPException(
+                status_code=500,
+                detail="mcp.api.health_timeout_seconds must be a positive number",
+            )
+
+        async def _bounded_probe(server_index: int) -> Dict[str, Any]:
+            try:
+                return await asyncio.wait_for(
+                    _probe_mcp_server(server_index),
+                    timeout=health_timeout_seconds,
+                )
+            except TimeoutError:
+                item = dict(servers[server_index])
+                item.update(
+                    {
+                        "ok": False,
+                        "latency_ms": int(health_timeout_seconds * 1000),
+                        "tool_count": 0,
+                        "error": (
+                            "health probe exceeded configured "
+                            f"{health_timeout_seconds:g}s deadline"
+                        ),
+                    }
+                )
+                return item
+
+        statuses = await asyncio.gather(
+            *(_bounded_probe(i) for i in range(len(servers)))
+        )
         return {"servers": statuses}
 
     # ── Audit endpoint ────────────────────────────────────────
@@ -5745,19 +5939,25 @@ def build_router(
 
         from ..mcp import MCPConnection
 
-        connection = MCPConnection.from_config(
-            config,
-            server_index=req.server_index,
-            servers_override=_session_server_specs(session_id),
-        )
-        await connection.connect()
-        try:
-            current_servers = _session_server_specs(session_id)
+        current_servers = _session_server_specs(session_id)
+        resolved_index = req.server_index
+        if req.server is not None:
+            server_spec = dict(req.server)
+            connection = _connection_from_server_spec(server_spec)
+            resolved_index = 0
+        else:
             server_spec = (
                 current_servers[req.server_index]
                 if 0 <= int(req.server_index) < len(current_servers)
                 else {}
             )
+            connection = MCPConnection.from_config(
+                config,
+                server_index=req.server_index,
+                servers_override=current_servers,
+            )
+        await connection.connect()
+        try:
             require_initialize = _resolve_mcp_require_initialize(
                 req.require_initialize, server_spec
             )
@@ -5766,7 +5966,7 @@ def build_router(
             job_id = _create_mcp_job(
                 session_id=session_id,
                 job_type="mcp_proxy_tools_list",
-                server_index=req.server_index,
+                server_index=resolved_index,
                 method="tools/list",
             )
             try:
@@ -5783,7 +5983,7 @@ def build_router(
                 TranscriptEvent(
                     event_type="mcp_tools_list",
                     data={
-                        "server_index": req.server_index,
+                        "server_index": resolved_index,
                         "tool_count": len(result.get("tools") or []),
                     },
                 ),
@@ -5811,10 +6011,15 @@ def build_router(
         from ..mcp import MCPConnection
 
         current_servers = _session_server_specs(session_id)
+        resolved_index = req.server_index
         server_spec = (
-            current_servers[req.server_index]
-            if 0 <= int(req.server_index) < len(current_servers)
-            else {}
+            dict(req.server)
+            if req.server is not None
+            else (
+                current_servers[req.server_index]
+                if 0 <= int(req.server_index) < len(current_servers)
+                else {}
+            )
         )
         extra_headers = _file_mcp_extra_headers(request, server_spec)
         if extra_headers:
@@ -5825,18 +6030,22 @@ def build_router(
             merged_extra_headers = dict(merged_extra_headers)
             merged_extra_headers.update(extra_headers)
             server_spec["extra_headers"] = merged_extra_headers
-            if 0 <= int(req.server_index) < len(current_servers):
+            if req.server is None and 0 <= int(req.server_index) < len(current_servers):
                 current_servers = list(current_servers)
                 current_servers[req.server_index] = server_spec
         call_arguments = _normalize_file_mcp_arguments(
             server_spec, req.name, req.arguments
         )
 
-        connection = MCPConnection.from_config(
-            config,
-            server_index=req.server_index,
-            servers_override=current_servers,
-        )
+        if req.server is not None:
+            connection = _connection_from_server_spec(server_spec)
+            resolved_index = 0
+        else:
+            connection = MCPConnection.from_config(
+                config,
+                server_index=req.server_index,
+                servers_override=current_servers,
+            )
         await connection.connect()
         try:
             require_initialize = _resolve_mcp_require_initialize(
@@ -5848,7 +6057,7 @@ def build_router(
             job_id = _create_mcp_job(
                 session_id=session_id,
                 job_type="mcp_proxy_tools_call",
-                server_index=req.server_index,
+                server_index=resolved_index,
                 method="tools/call",
                 payload={"name": req.name, "arguments": call_arguments},
                 correlation_id=correlation_id,
@@ -5858,7 +6067,7 @@ def build_router(
                 TranscriptEvent(
                     event_type="mcp_tool_call",
                     data={
-                        "server_index": req.server_index,
+                        "server_index": resolved_index,
                         "name": req.name,
                         "arguments": call_arguments,
                     },
@@ -6818,7 +7027,18 @@ def build_router(
                         )
                     else:
                         _fail_mcp_job(job_id, error=str(e))
-                        raise
+                        admin_logger.exception(
+                            "MCP execute step failed",
+                            extra={
+                                "session_id": session_id,
+                                "server_index": req.server_index,
+                                "step_method": str(step.method or ""),
+                            },
+                        )
+                        raise HTTPException(
+                            status_code=502,
+                            detail=f"MCP step failed: {str(e)[:500]}",
+                        ) from e
 
             sessions.append_event(
                 session_id,
@@ -6951,16 +7171,32 @@ def build_router(
             await transport.terminate_session()
 
             verify_error = None
+            post_termination_request_succeeded = None
+            verify_ok = None
             if req.verify_method:
                 try:
                     await transport.request(req.verify_method, params=req.verify_params)
-                    verify_error = (
-                        "expected failure after termination but request succeeded"
-                    )
+                    post_termination_request_succeeded = True
                 except Exception as e:
+                    post_termination_request_succeeded = False
                     verify_error = str(e)
 
-            return {"ok": True, "verify_error": verify_error}
+                if req.verify_expect_failure is not None:
+                    verify_ok = (
+                        not post_termination_request_succeeded
+                        if req.verify_expect_failure
+                        else post_termination_request_succeeded
+                    )
+
+            return {
+                "ok": True,
+                "terminated": True,
+                "verification_attempted": bool(req.verify_method),
+                "verify_expect_failure": req.verify_expect_failure,
+                "post_termination_request_succeeded": post_termination_request_succeeded,
+                "verify_ok": verify_ok,
+                "verify_error": verify_error,
+            }
         finally:
             await connection.close()
 

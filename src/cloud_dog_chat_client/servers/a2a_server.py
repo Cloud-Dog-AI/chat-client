@@ -271,6 +271,7 @@ def create_app():
         version="1",
         description="Cloud-Dog chat-client A2A event surface",
         enable_request_logging=True,
+        enable_health=False,
         register_signal_handlers_on_startup=False,
         enable_audit_logging=False,
     )
@@ -805,11 +806,9 @@ def create_app():
             mgr = SessionManager(log_folder=log_folder, session_store=runtime.store)
             parts = text.strip().split(None, 1)
             if len(parts) == 2 and len(parts[0]) >= 32:
-                session_id, message = parts
+                session_id = parts[0]
             else:
                 session_id = mgr.create_session(metadata={"source": "a2a"})
-                message = text
-            from .common import load_config as _load_config
             return f"Message queued in session {session_id}. Note: full LLM processing requires the API server runtime."
         except Exception as exc:
             return f"Error sending message: {exc}"

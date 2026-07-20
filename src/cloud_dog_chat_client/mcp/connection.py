@@ -16,6 +16,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from typing import Any, Dict, Optional
+from urllib.parse import urlsplit, urlunsplit
 
 from ..config import ConfigManager
 from cloud_dog_api_kit.mcp.client_transport import (
@@ -31,6 +32,18 @@ from cloud_dog_api_kit.mcp.client_transport import (
 )
 
 _MCP_SESSION_HEADER = "Mcp-Session-Id"
+
+
+def normalize_http_endpoint(base_url: str, request_path: str) -> tuple[str, str]:
+    """Avoid appending an MCP request path already present in an endpoint URI."""
+    base = str(base_url or "").rstrip("/")
+    path = "/" + str(request_path or "").strip("/")
+    parsed = urlsplit(base)
+    base_path = parsed.path.rstrip("/")
+    if path != "/" and (base_path == path or base_path.endswith(path)):
+        retained_path = base_path[: -len(path)].rstrip("/")
+        base = urlunsplit((parsed.scheme, parsed.netloc, retained_path, parsed.query, parsed.fragment)).rstrip("/")
+    return base, path
 
 
 class SessionHTTPJSONRPCTransport(HTTPJSONRPCTransport):
@@ -118,6 +131,7 @@ class MCPConnection:
         if transport in ("streamable_http", "streamablehttp", "mcp"):
             base_url = str(s.get("base_url") or "")
             mcp_path = str(s.get("mcp_path") or defaults.get("mcp_path") or "/mcp")
+            base_url, mcp_path = normalize_http_endpoint(base_url, mcp_path)
             api_key_header: Optional[str] = str(
                 s.get("api_key_header") or defaults.get("api_key_header") or ""
             )
@@ -142,7 +156,7 @@ class MCPConnection:
             timeout_seconds = float(
                 s.get("timeout_seconds")
                 or defaults.get("timeout_seconds")
-                or config.get("client_api.request_timeout_seconds")
+                or cfg.get("client_api.request_timeout_seconds")
                 or 30.0
             )
             read_timeout_seconds: Optional[float] = s.get("read_timeout_seconds")
@@ -216,7 +230,7 @@ class MCPConnection:
             timeout_seconds = float(
                 s.get("timeout_seconds")
                 or defaults.get("timeout_seconds")
-                or config.get("client_api.request_timeout_seconds")
+                or cfg.get("client_api.request_timeout_seconds")
                 or 30.0
             )
             verify_tls = bool(
@@ -316,7 +330,7 @@ class MCPConnection:
             timeout_seconds = float(
                 s.get("timeout_seconds")
                 or defaults.get("timeout_seconds")
-                or config.get("client_api.request_timeout_seconds")
+                or cfg.get("client_api.request_timeout_seconds")
                 or 30.0
             )
             verify_tls = bool(

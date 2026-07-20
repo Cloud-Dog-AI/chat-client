@@ -36,7 +36,7 @@ from cloud_dog_jobs import (
     SQLQueueBackend,
 )
 from cloud_dog_jobs.observability.audit import AuditEmitter
-from sqlalchemy import update
+from sqlalchemy import delete, update
 
 from ..config import ConfigManager
 from ..database.db_config import get_database_settings
@@ -222,6 +222,7 @@ class JobsRuntime:
             _dead_letter_queue=dead_letter_queue,
         )
         instance._register_handlers()
+        instance.ensure_webui_conformance_seed()
         return instance
 
     def _register_handlers(self) -> None:
@@ -235,6 +236,59 @@ class JobsRuntime:
             register_handler("mcp_proxy_tools_list", ...)
         """
         pass
+
+    def ensure_webui_conformance_seed(self) -> None:
+        """Ensure the durable PS-76 lifecycle/RBAC seed through real queue APIs.
+
+        The records are idempotent by target state and owner. If a conformance
+        action legitimately transitions one seed, the next runtime start adds
+        only the missing target state and preserves the historical record.
+        """
+        required = (
+            ("succeeded", "admin"),
+            ("failed", "admin"),
+            ("retry_wait", "admin"),
+            ("cancelled", "admin"),
+            ("running", "admin"),
+            ("succeeded", "user"),
+        )
+        existing = [self.serialise_job(job) for job in self.backend.all_jobs()]
+        for target_state, user_id in required:
+            found = any(
+                str(item.get("status") or "") == target_state
+                and str(item.get("user_id") or "") == user_id
+                and item.get("payload", {}).get("seed_marker") == "w28a-686-r2-seed"
+                and item.get("payload", {}).get("target_state") == target_state
+                for item in existing
+            )
+            if found:
+                continue
+            job_id = self.create_job(
+                job_type="webui_conformance_seed",
+                payload={
+                    "seed_marker": "w28a-686-r2-seed",
+                    "target_state": target_state,
+                    "request_auth_identity": user_id,
+                },
+                user_id=user_id,
+            )
+            if target_state == "running":
+                self.mark_running(job_id, worker_id="webui-conformance-seed")
+            elif target_state == "succeeded":
+                self.mark_running(job_id, worker_id="webui-conformance-seed")
+                self.complete(job_id, result={"ok": True, "seed": "succeeded"})
+            elif target_state == "failed":
+                self.mark_running(job_id, worker_id="webui-conformance-seed")
+                self.fail(job_id, error="Seed failure for conformance testing")
+            elif target_state == "retry_wait":
+                self.mark_running(job_id, worker_id="webui-conformance-seed")
+                self.fail(
+                    job_id,
+                    error="Seed retry for conformance testing",
+                    retryable=True,
+                )
+            elif target_state == "cancelled":
+                self.cancel(job_id, reason="Seed cancellation for conformance testing")
 
     def health(self) -> bool:
         """Return True if the job backend is reachable."""
@@ -552,6 +606,119 @@ class JobsRuntime:
                 extra={"reason": str(reason)[:200]} if reason else None,
             )
         return result
+
+    def retry(self, job_id: str) -> bool:
+        """Return a terminal retryable job to the durable queue.
+
+        Manual retries retain the original request payload and increment the
+        persisted attempt counter, while clearing outcome-only payload fields.
+        """
+        job = self._get_required(job_id)
+        retryable = {
+            JobStatus.FAILED,
+            JobStatus.CANCELLED,
+            JobStatus.TIMEOUT,
+            JobStatus.DEAD_LETTERED,
+        }
+        if job.status not in retryable:
+            return False
+
+        repo = getattr(self.backend, "_repo", None)
+        jobs_table = getattr(repo, "jobs", None)
+        engine = getattr(repo, "engine", None)
+        if repo is None or jobs_table is None or engine is None:
+            return False
+
+        from_state = str(job.status.value if hasattr(job.status, "value") else job.status)
+        payload = dict(job.payload or {})
+        for key in (
+            "cancel_reason",
+            "cancelled_at",
+            "completed_at",
+            "error",
+            "failed_at",
+            "result",
+            "retry_reason",
+        ):
+            payload.pop(key, None)
+        meta = job.to_meta_dict()
+        meta.pop("result", None)
+        meta.pop("last_error", None)
+        meta.pop("progress", None)
+        meta["attempts"] = int(getattr(job, "attempt", 0) or 0) + 1
+        now = datetime.now(tz=timezone.utc)
+        with engine.begin() as conn:
+            result = conn.execute(
+                update(jobs_table)
+                .where(jobs_table.c.job_id == job_id)
+                .where(jobs_table.c.status.in_([state.value for state in retryable]))
+                .values(
+                    payload=payload,
+                    meta=meta,
+                    status=JobStatus.QUEUED.value,
+                    claimed_by=None,
+                    updated_at=now,
+                )
+            )
+        if result.rowcount != 1:
+            return False
+        _emit_job_audit(
+            self.audit_emitter,
+            "job.retry",
+            "success",
+            job_id=job_id,
+            job_type=str(job.job_type),
+            from_state=from_state,
+            to_state=JobStatus.QUEUED.value,
+            correlation_id=str(job.correlation_id or ""),
+            user_id=str(job.user_id or ""),
+            extra={"attempt": meta["attempts"]},
+        )
+        return True
+
+    def delete(self, job_id: str) -> bool:
+        """Permanently remove a terminal job and its dependent records."""
+        job = self._get_required(job_id)
+        terminal = {
+            JobStatus.SUCCEEDED,
+            JobStatus.FAILED,
+            JobStatus.CANCELLED,
+            JobStatus.TIMEOUT,
+            JobStatus.TTL_EXPIRED,
+            JobStatus.DEAD_LETTERED,
+            JobStatus.ARCHIVED,
+        }
+        if job.status not in terminal:
+            return False
+
+        repo = getattr(self.backend, "_repo", None)
+        jobs_table = getattr(repo, "jobs", None)
+        engine = getattr(repo, "engine", None)
+        if repo is None or jobs_table is None or engine is None:
+            return False
+        with engine.begin() as conn:
+            for table_name in ("job_call_logs", "job_deliveries", "job_callbacks"):
+                table = getattr(repo, table_name, None)
+                if table is not None:
+                    conn.execute(delete(table).where(table.c.job_id == job_id))
+            result = conn.execute(
+                delete(jobs_table)
+                .where(jobs_table.c.job_id == job_id)
+                .where(jobs_table.c.status.in_([state.value for state in terminal]))
+            )
+        if result.rowcount != 1:
+            return False
+        _emit_job_audit(
+            self.audit_emitter,
+            "job.delete",
+            "success",
+            job_id=job_id,
+            job_type=str(job.job_type),
+            from_state=str(job.status.value if hasattr(job.status, "value") else job.status),
+            correlation_id=str(job.correlation_id or ""),
+            user_id=str(job.user_id or ""),
+        )
+        return True
 
     def _update_finished_at(self, job_id: str, when: datetime) -> None:
         """Set finished_at on the job row if the column exists."""

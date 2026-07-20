@@ -17,7 +17,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from threading import RLock
-from typing import Any, Callable, Dict, Optional
+from typing import Any, Callable, Optional
 from uuid import uuid4
 
 from ..session.transcript import TranscriptEvent

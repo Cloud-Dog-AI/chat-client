@@ -113,46 +113,8 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
-    op.drop_index(op.f("ix_chat_audit_logs_tenant_id"), table_name="chat_audit_logs")
-    op.drop_index(op.f("ix_chat_audit_logs_session_id"), table_name="chat_audit_logs")
-    op.drop_index(op.f("ix_chat_audit_logs_request_id"), table_name="chat_audit_logs")
-    op.drop_index(op.f("ix_chat_audit_logs_is_deleted"), table_name="chat_audit_logs")
-    op.drop_index(op.f("ix_chat_audit_logs_deleted_at"), table_name="chat_audit_logs")
-    op.drop_index(op.f("ix_chat_audit_logs_created_at"), table_name="chat_audit_logs")
-    op.drop_index(op.f("ix_chat_audit_logs_action"), table_name="chat_audit_logs")
+    # Drop child tables first; backend engines remove associated indexes/FKs with table drops.
     op.drop_table("chat_audit_logs")
-
-    op.drop_index(
-        op.f("ix_chat_session_preferences_tenant_id"),
-        table_name="chat_session_preferences",
-    )
-    op.drop_index(
-        op.f("ix_chat_session_preferences_session_id"),
-        table_name="chat_session_preferences",
-    )
-    op.drop_index(
-        op.f("ix_chat_session_preferences_is_deleted"),
-        table_name="chat_session_preferences",
-    )
-    op.drop_index(
-        op.f("ix_chat_session_preferences_deleted_at"),
-        table_name="chat_session_preferences",
-    )
-    op.drop_index(
-        op.f("ix_chat_session_preferences_created_at"),
-        table_name="chat_session_preferences",
-    )
     op.drop_table("chat_session_preferences")
-
-    op.drop_index(op.f("ix_chat_session_events_tenant_id"), table_name="chat_session_events")
-    op.drop_index(op.f("ix_chat_session_events_session_id"), table_name="chat_session_events")
-    op.drop_index(op.f("ix_chat_session_events_is_deleted"), table_name="chat_session_events")
-    op.drop_index(op.f("ix_chat_session_events_deleted_at"), table_name="chat_session_events")
-    op.drop_index(op.f("ix_chat_session_events_created_at"), table_name="chat_session_events")
     op.drop_table("chat_session_events")
-
-    op.drop_index(op.f("ix_chat_sessions_tenant_id"), table_name="chat_sessions")
-    op.drop_index(op.f("ix_chat_sessions_is_deleted"), table_name="chat_sessions")
-    op.drop_index(op.f("ix_chat_sessions_deleted_at"), table_name="chat_sessions")
-    op.drop_index(op.f("ix_chat_sessions_created_at"), table_name="chat_sessions")
     op.drop_table("chat_sessions")

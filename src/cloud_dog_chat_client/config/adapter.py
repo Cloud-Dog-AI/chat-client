@@ -26,6 +26,7 @@ from cloud_dog_config.naming import env_to_path  # type: ignore[import-untyped]
 from cloud_dog_logging import get_logger  # type: ignore[import-untyped]
 
 from ..storage_fs import repo_root_from_file, resolve_path
+from .provenance import build_config_provenance
 
 
 class ConfigManager:
@@ -58,6 +59,7 @@ class ConfigManager:
 
         self.env_file: Optional[str] = None
         self._config_dict: Dict[str, Any] = {}
+        self._provenance: Dict[str, Any] = {"sources": {}, "counts": {}}
         self._load_config()
 
     @staticmethod
@@ -131,6 +133,13 @@ class ConfigManager:
         self._config_dict = self._normalise_indexed_collections(exported)
         self.env_files = list(env_files)
         self.env_file = self.env_files[-1] if self.env_files else None
+        self._provenance = build_config_provenance(
+            final_tree=self._config_dict,
+            defaults_yaml=defaults_yaml,
+            config_yaml=config_yaml,
+            env_files=self.env_files,
+            overrides=self._overrides,
+        )
 
     def _load_config(self) -> None:
         """Load config, then optionally re-load using discovered `app.env_file`."""
@@ -229,6 +238,10 @@ class ConfigManager:
     def get_all(self) -> Dict[str, Any]:
         """Return a deep copy of the compiled config tree."""
         return copy.deepcopy(self._config_dict)
+
+    def get_provenance(self) -> Dict[str, Any]:
+        """Return value-free per-leaf source, secret, and server metadata."""
+        return copy.deepcopy(self._provenance)
 
     def set(self, path: str, value: Any) -> None:
         """Reject runtime mutation to enforce immutable config semantics."""

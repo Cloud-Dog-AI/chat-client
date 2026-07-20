@@ -21,6 +21,11 @@ set -euo pipefail
 require_main_or_release_branch() {
   local branch
   branch="$(git rev-parse --abbrev-ref HEAD 2>/dev/null || true)"
+  # Publication-suffixed artifacts are local verification builds; the suffix
+  # path suppresses registry tagging, so it is safe from a repair branch.
+  if [[ -n "${PUBLICATION_TAG_SUFFIX:-}" ]]; then
+    return 0
+  fi
   case "${branch}" in
     main|release/*)
       return 0
@@ -143,7 +148,7 @@ Path(pip_conf).write_text(
     "[global]\n"
     f"index-url = {index_url}\n"
     f"trusted-host = {trusted_host}\n"
-    "               files.pythonhosted.org\n",
+    "disable-pip-version-check = true\n",
     encoding="utf-8",
 )
 PY
@@ -156,10 +161,10 @@ elif [[ -n "${PYPI_URL}" && "${PYPI_URL}" != "https://pypi.org/simple/" ]]; then
 [global]
 index-url = ${PYPI_URL}
 trusted-host = ${TRUSTED_HOST}
-               files.pythonhosted.org
+disable-pip-version-check = true
 EOF
   chmod 600 "${PIP_CONF}"
-  echo "pip.conf generated with anonymous single-index access (${PYPI_URL})."
+  echo "pip.conf generated with single-index access (${TRUSTED_HOST}; credentials redacted)."
 else
   echo "Using default public PyPI index (${PYPI_URL:-https://pypi.org/simple/}); no pip.conf secret mounted."
 fi

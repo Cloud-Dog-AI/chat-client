@@ -23,7 +23,6 @@ from cloud_dog_api_kit.middleware.timeout import TimeoutMiddleware  # type: igno
 from .. import __version__
 from ..api.auth import (
     _try_resolve_principal as resolve_api_key_principal,
-    principal_has_admin_capability as has_permission,  # PS-70 UM3 RBAC
 )
 from ..ui_spa import (
     is_spa_document_navigation,
@@ -105,6 +104,7 @@ def create_app():
         version="1",
         description="Cloud-Dog chat-client web proxy",
         enable_request_logging=True,
+        enable_health=False,
         register_signal_handlers_on_startup=False,
         enable_audit_logging=False,
     )
@@ -159,29 +159,43 @@ def create_app():
     # In-memory token session store (no itsdangerous dependency).
     _sessions: dict[str, dict] = {}
     # Thread-a (W28A-727-R5) flat WebUI login accounts: the three flat roles
-    # admin / read-write / read-only. The admin account keeps its historical
-    # config-resolved credentials (back-compat with existing demo scripts/tests);
-    # read-write and read-only are seeded so all three flat roles are demoable
-    # out of the box. Credentials are config-routed/env-overridable via the same
-    # ConfigManager accessor the admin account already uses (§1.4.1-compliant —
-    # no direct-environment reads, all through cfg.get); the matched account's
-    # flat role decides the permission set via the ONE shared cloud_dog_idam
-    # guard (see web_flat_roles).
-    # Defaults mirror the canonical file-mcp accounts for cross-service parity.
+    # admin / read-write / read-only. Credentials must be supplied by the
+    # configuration boundary. Never manufacture operational passwords in the
+    # application: a missing password is a deployment/configuration error.
+    def _required_password(key: str) -> str:
+        value = str(cfg.get(key) or "").strip()
+        if not value:
+            raise RuntimeError(f"required configured credential is missing: {key}")
+        return value
+
+    def _optional_password(key: str) -> str:
+        return str(cfg.get(key) or "").strip()
+
     _admin_username = str(cfg.get("web_login.username") or "admin").strip() or "admin"
-    _admin_password = str(cfg.get("web_login.password") or "OrangeRiverTable").strip() or "OrangeRiverTable"
+    _admin_password = _required_password("web_login.password")
     _rw_username = str(cfg.get("web_login.read_write_username") or "read-write").strip() or "read-write"
-    _rw_password = str(cfg.get("web_login.read_write_password") or "BlueRiverChair").strip() or "BlueRiverChair"
+    _rw_password = _optional_password("web_login.read_write_password")
     _ro_username = str(cfg.get("web_login.read_only_username") or "read-only").strip() or "read-only"
-    _ro_password = str(cfg.get("web_login.read_only_password") or "GreenRiverDesk").strip() or "GreenRiverDesk"
+    _ro_password = _optional_password("web_login.read_only_password")
     # username -> (password, flat-role). The comparison in /auth/login is
     # constant-time per candidate (secrets.compare_digest) so a wrong username
     # and a wrong password are indistinguishable (no username enumeration).
+    #
+    # W28R-3023: the admin password is required and is the only web credential
+    # provisioned across the estate (Vault services.<svc>.web_password). The
+    # read-write / read-only flat roles are OPTIONAL: they are registered only
+    # when a non-empty password is configured, and are otherwise simply
+    # unavailable for login. An empty password never yields a usable account, so
+    # a role is never exposed with a blank/anonymous credential. Previously these
+    # were hard-required, which made the service impossible to start under the
+    # standard estate deployment (which provisions only the admin password).
     _flat_accounts: dict[str, tuple[str, str]] = {
         _admin_username: (_admin_password, FLAT_ADMIN_ROLE),
-        _rw_username: (_rw_password, FLAT_READ_WRITE_ROLE),
-        _ro_username: (_ro_password, FLAT_READ_ONLY_ROLE),
     }
+    if _rw_password:
+        _flat_accounts[_rw_username] = (_rw_password, FLAT_READ_WRITE_ROLE)
+    if _ro_password:
+        _flat_accounts[_ro_username] = (_ro_password, FLAT_READ_ONLY_ROLE)
     # Stable per-role user-id for the session payload.
     _role_user_id = {FLAT_ADMIN_ROLE: "1", FLAT_READ_WRITE_ROLE: "2", FLAT_READ_ONLY_ROLE: "3"}
     _cookie_name = "chat_web_session"

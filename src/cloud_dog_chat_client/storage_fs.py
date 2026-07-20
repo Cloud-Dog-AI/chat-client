@@ -16,7 +16,7 @@ from __future__ import annotations
 
 import re
 from os import getcwd, statvfs
-from posixpath import abspath, basename, dirname, isabs, join, normpath, splitext
+from posixpath import abspath, basename, dirname, join, normpath, splitext
 from typing import Iterable
 
 from cloud_dog_storage.backends.local import LocalStorage

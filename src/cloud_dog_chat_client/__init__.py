@@ -28,6 +28,10 @@ NF-004, NF-005, NF-006, NF-007, NF-008, R-7, R-16, R7.3.
 
 from importlib.metadata import PackageNotFoundError, version as _dist_version
 
+from ._runtime import enforce_runtime
+
+enforce_runtime()
+
 # CC8 (W28C-1703): single source of truth for the chat-client version. Every
 # version-bearing surface (/version, /api/version, /api/status, /health and the
 # SPA runtime-config.js APP_VERSION) MUST resolve to this value so the four
@@ -39,4 +43,4 @@ try:
 except PackageNotFoundError:  # pragma: no cover - source checkout without dist
     __version__ = "0.0.0+source"
 
-__all__ = ["__version__"]
+__all__ = ["__version__", "enforce_runtime"]

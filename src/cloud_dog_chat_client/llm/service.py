@@ -19,8 +19,6 @@ import json
 import uuid
 from typing import Any, AsyncIterator, List
 
-import httpx
-
 from cloud_dog_llm.config.models import ProviderConfig  # type: ignore[import-untyped]
 from cloud_dog_llm.domain.enums import EventType  # type: ignore[import-untyped]
 from cloud_dog_llm.domain.errors import LLMError  # type: ignore[import-untyped]
@@ -29,10 +27,7 @@ from cloud_dog_llm.domain.models import (  # type: ignore[import-untyped]
     Message,
     SessionContext,
 )
-from cloud_dog_llm.providers.ollama import OllamaAdapter  # type: ignore[import-untyped]
-from cloud_dog_llm.providers.openai_compat import (  # type: ignore[import-untyped]
-    OpenAICompatAdapter,
-)
+from cloud_dog_llm.providers.factory import create_provider  # type: ignore[import-untyped]
 from cloud_dog_llm.providers.registry import ProviderRegistry  # type: ignore[import-untyped]
 from cloud_dog_llm.runtime.client import LLMClient  # type: ignore[import-untyped]
 
@@ -78,8 +73,20 @@ class LLMService:
 
         stop = config.get("llm.stop")
         self._include_reasoning_tags = bool(
-            config.get("llm.include_reasoning_tags") or False
+            config.get("llm.reasoning.output")
+            or config.get("llm.include_reasoning_tags")
+            or False
         )
+        self._think = bool(config.get("llm.reasoning.enabled") or False)
+        reasoning_budget = config.get("llm.reasoning.budget")
+        self._think_budget = int(reasoning_budget) if reasoning_budget is not None else None
+        # Only the native reasoning-output mode requires reasoning to be enabled.
+        # include_reasoning_tags is prompt-induced tag wrapping and works without
+        # native reasoning (W28R-3023: restore pre-W28C-1720 behaviour; the over-broad
+        # check forced native thinking mode, which breaks the <RESPONSE> envelope format
+        # for qwen3 and 500s the formatting tests).
+        if bool(config.get("llm.reasoning.output")) and not self._think:
+            raise RuntimeError("llm.reasoning.output requires llm.reasoning.enabled=true")
         if isinstance(stop, str):
             try:
                 parsed = json.loads(stop)
@@ -120,23 +127,21 @@ class LLMService:
 
         self._base_url = base_url
 
-        # OpenRouter (and other OpenAI-compatible gateways) speak the OpenAI wire
-        # protocol, so normalise their provider names onto the openai_compat
-        # adapter. Other services accept "openrouter" or auto-detect it from the
-        # base_url; chat-client previously rejected the literal name (W28M-1624).
-        self._provider_id = (
-            "openai_compat"
-            if provider
-            in ("openai", "openai_compat", "openai-compatible", "openrouter", "vllm")
-            else provider
-        )
+        aliases = {"openai-compatible": "openai_compat", "vllm": "openai_compat"}
+        self._provider_id = aliases.get(provider, provider)
 
         registry = ProviderRegistry()
         provider_base_url = base_url
-        if self._provider_id == "openai_compat" and not provider_base_url.rstrip(
-            "/"
-        ).endswith("/v1"):
+        if self._provider_id in {"openai", "openai_compat"} and not provider_base_url.rstrip("/").endswith("/v1"):
             provider_base_url = f"{provider_base_url.rstrip('/')}/v1"
+
+        extra_headers = None
+        if self._provider_id == "openrouter":
+            extra_headers = {
+                "HTTP-Referer": str(config.get("llm.openrouter.http_referer") or ""),
+                "X-Title": str(config.get("llm.openrouter.x_title") or ""),
+            }
+            extra_headers = {key: value for key, value in extra_headers.items() if value}
 
         provider_cfg = ProviderConfig(
             provider_id=self._provider_id,
@@ -144,14 +149,11 @@ class LLMService:
             model=model,
             api_key=str(config.get("llm.api_key") or ""),
             timeout_seconds=timeout_seconds,
+            extra_headers=extra_headers,
         )
-
-        if self._provider_id == "ollama":
-            registry.register(self._provider_id, OllamaAdapter(provider_cfg))
-        elif self._provider_id == "openai_compat":
-            registry.register(self._provider_id, OpenAICompatAdapter(provider_cfg))
-        else:
+        if self._provider_id not in {"ollama", "openrouter", "openai", "openai_compat"}:
             raise RuntimeError(f"Unsupported llm.provider: {provider}")
+        registry.register(self._provider_id, create_provider(provider_cfg))
 
         self._runtime_client = LLMClient(
             provider_registry=registry,
@@ -201,25 +203,6 @@ class LLMService:
         if first_idx is None:
             return content
         return content[:first_idx]
-
-    @staticmethod
-    def _extract_reasoning(raw: Any, provider_id: str) -> str:
-        """Internal helper to extract reasoning for this module."""
-        if not isinstance(raw, dict):
-            return ""
-        if provider_id == "ollama":
-            msg = raw.get("message")
-            if isinstance(msg, dict):
-                return str(msg.get("thinking") or "")
-            return ""
-        choices = raw.get("choices")
-        if isinstance(choices, list) and choices:
-            first = choices[0]
-            if isinstance(first, dict):
-                message = first.get("message")
-                if isinstance(message, dict):
-                    return str(message.get("reasoning") or "")
-        return ""
 
     @staticmethod
     def _sanitise_error_message(error: Exception) -> str:
@@ -278,15 +261,17 @@ class LLMService:
             ),
             max_tokens=self._max_tokens,
             stream=stream,
+            think=self._think,
+            think_budget=self._think_budget,
+            include_reasoning=self._include_reasoning_tags,
             params=self._request_params(),
         )
 
-    def _normalise_content(self, *, content: str, raw: Any) -> str:
+    def _normalise_content(self, *, content: str, reasoning: str | None) -> str:
         """Internal helper to content for this module."""
         out = str(content or "")
         if self._include_reasoning_tags:
-            reasoning = self._extract_reasoning(raw, self._provider_id)[:512]
-            out = f"<thinking>{reasoning}</thinking><reasoning>{out}</reasoning>"
+            out = f"<thinking>{str(reasoning or '')[:512]}</thinking><reasoning>{out}</reasoning>"
         out = self._apply_stop(out, self._stop_tokens)
         # Never truncate strict-format responses before validation; clipping can
         # remove closing envelope tags and create false contract failures.
@@ -307,7 +292,7 @@ class LLMService:
             raise LLMProviderError(self._sanitise_error_message(e)) from e
 
         raw_payload = response.raw_provider_response
-        content = self._normalise_content(content=response.content, raw=raw_payload)
+        content = self._normalise_content(content=response.content, reasoning=response.reasoning)
         return ChatCompletionResult(content=content, raw=raw_payload)
 
     async def complete(self, messages: List[ChatMessage]) -> ChatCompletionResult:
@@ -354,84 +339,42 @@ class LLMService:
     async def _stream_ollama(
         self, messages: List[ChatMessage]
     ) -> AsyncIterator[ChatStreamChunk]:
-        """Internal helper to stream ollama for this module."""
-        payload: dict[str, Any] = {
-            "model": self._model,
-            "messages": [
-                {"role": str(m.role), "content": str(m.content)} for m in messages
-            ],
-            "stream": True,
-        }
-        options = self._request_params()
-        if options:
-            payload["options"] = options
+        """Stream Ollama through the shared platform adapter."""
+        request = self._to_runtime_request(messages, stream=True)
+        wrap = self._include_reasoning_tags
+        reasoning_open = False
+        text_open = False
 
-        async with httpx.AsyncClient(
-            base_url=self._base_url.rstrip("/"),
-            timeout=httpx.Timeout(
-                float(self._config.get("llm.timeout_seconds")),
-                connect=float(self._config.get("llm.timeout_seconds")),
-            ),
-        ) as client:
-            try:
-                async with client.stream("POST", "/api/chat", json=payload) as resp:
-                    if resp.status_code != 200:
-                        raise LLMProviderError("LLM provider request failed")
+        def _tag(text: str) -> ChatStreamChunk:
+            return ChatStreamChunk(content_delta=text, raw={"event": "reasoning_tag"})
 
-                    thinking_started = False
-                    reasoning_started = False
-
-                    async for line in resp.aiter_lines():
-                        if not line:
-                            continue
-                        try:
-                            data = json.loads(line)
-                        except Exception:
-                            continue
-                        if not isinstance(data, dict):
-                            continue
-
-                        msg = data.get("message")
-                        content = ""
-                        thinking = ""
-                        if isinstance(msg, dict):
-                            content = str(msg.get("content") or "")
-                            thinking = str(msg.get("thinking") or "")
-
-                        delta_out = ""
-                        if self._include_reasoning_tags:
-                            if thinking:
-                                if not thinking_started:
-                                    delta_out += "<thinking>"
-                                    thinking_started = True
-                                delta_out += thinking
-                            if content:
-                                if thinking_started and not reasoning_started:
-                                    delta_out += "</thinking><reasoning>"
-                                    reasoning_started = True
-                                elif not reasoning_started:
-                                    delta_out += "<reasoning>"
-                                    reasoning_started = True
-                                delta_out += content
-                        else:
-                            delta_out = content
-
-                        if delta_out:
-                            yield ChatStreamChunk(content_delta=delta_out, raw=data)
-
-                        if data.get("done") is True:
-                            if self._include_reasoning_tags:
-                                tail = ""
-                                if thinking_started and not reasoning_started:
-                                    tail = "</thinking><reasoning></reasoning>"
-                                elif reasoning_started:
-                                    tail = "</reasoning>"
-                                if tail:
-                                    yield ChatStreamChunk(content_delta=tail, raw=data)
-                            break
-            except httpx.RequestError as e:
-                raise LLMProviderError(self._sanitise_error_message(e)) from e
-
+        try:
+            # Mirror _normalise_content for the stream so reasoning tags are present
+            # in streamed output too (W28R-3023): <thinking>{reasoning}</thinking><reasoning>{text}</reasoning>.
+            if wrap:
+                yield _tag("<thinking>")
+                reasoning_open = True
+            async for event in self._runtime_client.chat_stream(request, self._session_context):
+                base_raw = {
+                    "event": event.type.value,
+                    "request_id": event.request_id,
+                    "provider_id": event.provider_id,
+                    "model_id": event.model_id,
+                }
+                if wrap and event.type == EventType.DELTA_REASONING and getattr(event, "text", None):
+                    yield ChatStreamChunk(content_delta=str(event.text), raw=base_raw)
+                elif event.type == EventType.DELTA_TEXT and event.text:
+                    if wrap and not text_open:
+                        yield _tag("</thinking><reasoning>")
+                        reasoning_open = False
+                        text_open = True
+                    yield ChatStreamChunk(content_delta=str(event.text), raw=base_raw)
+            if wrap:
+                if reasoning_open:
+                    yield _tag("</thinking><reasoning>")
+                yield _tag("</reasoning>")
+        except LLMError as exc:
+            raise LLMProviderError(self._sanitise_error_message(exc)) from exc
     def stream(self, messages: List[ChatMessage]) -> AsyncIterator[ChatStreamChunk]:
         """Handle stream for the current runtime context."""
         if self._provider_id == "ollama":

@@ -35,7 +35,6 @@ from cloud_dog_logging import (  # type: ignore[import-untyped]
 from cloud_dog_logging.audit_schema import Actor, AuditEvent, Target  # type: ignore[import-untyped]
 from cloud_dog_logging.middleware.fastapi import LoggingMiddleware  # type: ignore[import-untyped]
 
-from ..api.auth import principal_has_admin_capability as has_permission  # PS-70 UM3 RBAC
 from ..config import ConfigManager
 from ..database.runtime import ChatDatabaseRuntime
 from ..jobs import JobsRuntime
@@ -249,6 +248,11 @@ def create_app(config: ConfigManager):
         version=app_release,
         description="Cloud-Dog chat client API",
         enable_request_logging=True,
+        # The service owns the richer four-server health contract below.  Do
+        # not let API Kit pre-register a competing /health route, because
+        # FastAPI may compile that route into its middleware stack before the
+        # service route is added.
+        enable_health=False,
         register_signal_handlers_on_startup=False,
         enable_audit_logging=False,
     )

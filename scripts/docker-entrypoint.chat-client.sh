@@ -89,6 +89,48 @@ print("Database migration preflight complete")
 PY
 }
 
+wait_for_surface() {
+  local pid="$1"
+  local port="$2"
+  local label="$3"
+  local attempt
+
+  for attempt in $(seq 1 60); do
+    if ! kill -0 "${pid}" 2>/dev/null; then
+      local child_status
+      if wait "${pid}"; then
+        child_status=0
+      else
+        child_status=$?
+      fi
+      echo "${label} exited before binding port ${port} (status ${child_status})" >&2
+      return "${child_status}"
+    fi
+    # Bash builtin /dev/tcp probe — the runtime base image does not ship nc/netcat,
+    # so nc -z always failed and the surface was declared un-bound despite serving
+    # traffic (W28R-3023: readiness must not depend on an absent external tool).
+    if (exec 3<>"/dev/tcp/127.0.0.1/${port}") >/dev/null 2>&1; then
+      echo "${label} ready on port ${port}"
+      return 0
+    fi
+    sleep 1
+  done
+
+  echo "${label} did not bind port ${port} within 60 seconds" >&2
+  return 124
+}
+
+start_surface() {
+  local script="$1"
+  local port="$2"
+  local label="$3"
+
+  python3 "${script}" &
+  local pid=$!
+  pids+=("${pid}")
+  wait_for_surface "${pid}" "${port}" "${label}"
+}
+
 print_banner
 setup_shell_runtime
 
@@ -118,14 +160,14 @@ case "${MODE}" in
     }
     trap terminate_children EXIT INT TERM
 
-    python3 /app/start_api_server.py &
-    pids+=("$!")
-    python3 /app/start_web_server.py &
-    pids+=("$!")
-    python3 /app/start_mcp_server.py &
-    pids+=("$!")
-    python3 /app/start_a2a_server.py &
-    pids+=("$!")
+    # Each server constructs the shared database runtime during import.  Start
+    # surfaces one at a time so a fresh SQLite database cannot be seeded by four
+    # writers concurrently.  Once a port is listening, that surface has finished
+    # its migration/seed path and the next surface can safely initialise.
+    start_surface /app/start_api_server.py "${API_PORT}" "API server"
+    start_surface /app/start_web_server.py "${WEB_PORT}" "Web server"
+    start_surface /app/start_mcp_server.py "${MCP_PORT}" "MCP server"
+    start_surface /app/start_a2a_server.py "${A2A_PORT}" "A2A server"
     wait -n "${pids[@]}"
     exit $?
     ;;
