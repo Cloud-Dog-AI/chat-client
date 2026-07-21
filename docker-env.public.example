@@ -1,0 +1,79 @@
+# cloud-dog-chat-client — Docker Environment (PS-97 v1.1 §1.1.4 PUBLIC variant)
+#
+# PUBLIC variant — for external / GitHub-boundary deployments.
+# Uses *.example.com placeholders with <your-...-here> tokens.
+# Deployment-specific variants can provide private endpoints outside this file.
+#
+# Copy to docker-env.public and fill in real endpoints + secrets before running.
+# The container loads this file (mounted at /app/env-docker-defaults) and then any
+# higher-priority shell environment variables, and finally falls back to defaults.yaml.
+
+# ── Application ───────────────────────────────────────────────────
+CLOUD_DOG__APP__NAME=cloud-dog-chat-client
+CLOUD_DOG__APP__LOGFOLDER=/app/logs
+
+# ── Server Ports (derived from defaults.yaml + Dockerfile EXPOSE) ──
+CLOUD_DOG__API_SERVER__HOST=0.0.0.0
+CLOUD_DOG__API_SERVER__PORT=8050
+CLOUD_DOG__WEB_SERVER__HOST=0.0.0.0
+CLOUD_DOG__WEB_SERVER__PORT=8051
+CLOUD_DOG__MCP_SERVER__HOST=0.0.0.0
+CLOUD_DOG__MCP_SERVER__PORT=8052
+CLOUD_DOG__A2A_SERVER__HOST=0.0.0.0
+CLOUD_DOG__A2A_SERVER__PORT=8053
+
+# ── LLM ───────────────────────────────────────────────────────────
+CLOUD_DOG__LLM__PROVIDER=ollama
+CLOUD_DOG__LLM__BASE_URL=http://host.docker.internal:11434
+CLOUD_DOG__LLM__MODEL=<your-model-here>
+CLOUD_DOG__LLM__TIMEOUT_SECONDS=300
+CLOUD_DOG__LLM__STREAM=false
+
+# ── Client API runtime / Authentication ──────────────────────────
+CLOUD_DOG__CLIENT_API__ENABLED=true
+CLOUD_DOG__CLIENT_API__HOST=0.0.0.0
+CLOUD_DOG__CLIENT_API__PORT=8050
+CLOUD_DOG__CLIENT_API__API_KEY_HEADER=X-API-Key
+# No-auth mode: leave API_KEY empty. API-key mode: set a non-empty value.
+CLOUD_DOG__CLIENT_API__API_KEY=<your-api-key-here>
+CLOUD_DOG__CLIENT_API__ADMIN_API_KEY_HEADER=X-Admin-Key
+CLOUD_DOG__CLIENT_API__ADMIN_API_KEY=<your-admin-api-key-here>
+
+# ── Web login (Web UI) ───────────────────────────────────────────
+CLOUD_DOG_WEB_LOGIN_USERNAME=admin
+CLOUD_DOG__WEB_LOGIN__PASSWORD=<your-web-login-password-here>
+
+# ── MCP behaviour ────────────────────────────────────────────────
+CLOUD_DOG__MCP__API__REQUIRE_INITIALIZE=true
+CLOUD_DOG__MCP__DEFAULTS__PROTOCOL_VERSION=2024-11-05
+
+# ── Example downstream MCP server (optional, edit or remove) ──────
+# CLOUD_DOG__MCP__SERVERS__0__NAME=example-mcp
+# CLOUD_DOG__MCP__SERVERS__0__TRANSPORT=streamable_http
+# CLOUD_DOG__MCP__SERVERS__0__BASE_URL=https://mcp.example.com
+# CLOUD_DOG__MCP__SERVERS__0__MCP_PATH=/mcp
+# CLOUD_DOG__MCP__SERVERS__0__HEALTH_PATH=/health
+# CLOUD_DOG__MCP__SERVERS__0__TIMEOUT_SECONDS=120
+# CLOUD_DOG__MCP__SERVERS__0__API_KEY_HEADER=X-API-Key
+# CLOUD_DOG__MCP__SERVERS__0__API_KEY=<your-mcp-api-key-here>
+
+# ── Database (default: local sqlite) ─────────────────────────────
+CLOUD_DOG_DB__DIALECT=sqlite
+CLOUD_DOG_DB__DATABASE=./database/chat-client.db
+CLOUD_DOG_DB__SCHEMA=
+CLOUD_DOG__DB__DIALECT=sqlite
+CLOUD_DOG__DB__DATABASE=./database/chat-client.db
+CLOUD_DOG__DB__SCHEMA=
+
+# ── Container entrypoint controls ────────────────────────────────
+CHAT_CLIENT_MODE=all
+CHAT_CLIENT_ENV_FILE=/app/env-docker-defaults
+CHAT_CLIENT_ENABLE_SSH=false
+
+# ── Corporate Proxy (optional) ───────────────────────────────────
+HTTP_PROXY=
+HTTPS_PROXY=
+NO_PROXY=127.0.0.1,localhost,.example.com
+
+# ── Logging ──────────────────────────────────────────────────────
+CLOUD_DOG__LOG__LEVEL=INFO

@@ -206,8 +206,15 @@ if [[ "${VARIANT}" == "dev" ]]; then
 fi
 
 # ── W28C-1719 publish-before-pin guard (fail-closed; blocks build on unpublished internal pin) ──
+# W28A-SEC-R18: the guard (scripts/publish-before-pin-guard.sh) is INTERNAL CI tooling that
+# hardcodes the internal package index host; it is intentionally scrubbed out of the public
+# payload (PS-97 public boundary). Run it fail-closed when present (internal/dev builds);
+# skip it cleanly in the public payload where it is deliberately absent (public builds resolve
+# only from the public index, so there is no internal pin to guard).
 _PBP_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
-"${_PBP_DIR}/scripts/publish-before-pin-guard.sh" "${_PBP_DIR}" || exit $?
+if [[ -x "${_PBP_DIR}/scripts/publish-before-pin-guard.sh" ]]; then
+  "${_PBP_DIR}/scripts/publish-before-pin-guard.sh" "${_PBP_DIR}" || exit $?
+fi
 
 _PBP_REV="$(git -C "$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)" rev-parse HEAD 2>/dev/null || echo unknown)"
 # W28E-1863 fix-wave-d (WSC-014): propagate build identity to the image so the
