@@ -12,6 +12,25 @@ if [[ -z "$PYTHON_BIN" ]]; then
     PYTHON_BIN="$(command -v python3)"
   fi
 fi
+
+# W28A-SEC-R18 hardening: curl-free HTTP helpers (python stdlib) so the runtime
+# image does not need the curl package. _hc_probe returns 0 only on a 2xx/3xx
+# response (matches `curl -fsS` fail-on-error); _hc_get prints the response body.
+_hc_probe() {  # URL TIMEOUT_SECONDS
+  "$PYTHON_BIN" -c 'import sys,urllib.request
+try:
+    urllib.request.urlopen(sys.argv[1], timeout=float(sys.argv[2])).read()
+except Exception:
+    sys.exit(1)' "$1" "$2" >/dev/null 2>&1
+}
+_hc_get() {  # URL TIMEOUT_SECONDS -> stdout body (empty on failure)
+  "$PYTHON_BIN" -c 'import sys,urllib.request
+try:
+    sys.stdout.write(urllib.request.urlopen(sys.argv[1], timeout=float(sys.argv[2])).read().decode("utf-8","replace"))
+except Exception:
+    pass' "$1" "$2" 2>/dev/null
+}
+
 choose_writable_dir() {
   local label="$1"
   shift
@@ -179,7 +198,7 @@ health_url() {
 
 health_runtime_env() {
   local server="$1" payload
-  payload="$(curl -fsS --max-time 2 "$(health_url "$server")" 2>/dev/null || true)"
+  payload="$(_hc_get "$(health_url "$server")" 2)"
   [[ -n "$payload" ]] || return 1
   printf '%s' "$payload" | "$PYTHON_BIN" -c '
 import json
@@ -233,7 +252,7 @@ wait_for_health() {
   url="$(health_url "$server")"
   deadline=$((SECONDS + timeout))
   while (( SECONDS < deadline )); do
-    if curl -fsS --max-time 2 "$url" >/dev/null 2>&1; then
+    if _hc_probe "$url" 2; then
       return 0
     fi
     sleep 1
@@ -255,7 +274,7 @@ start_one() {
   if [[ -f "$pidfile" ]]; then
     pid="$(cat "$pidfile")"
     if is_pid_running "$pid"; then
-      if curl -fsS --max-time 2 "$(health_url "$server")" >/dev/null 2>&1; then
+      if _hc_probe "$(health_url "$server")" 2; then
         if health_matches_expected_env "$server"; then
           echo "$server already running (pid $pid)"
           return 0
@@ -277,7 +296,7 @@ start_one() {
     rm -f "$pidfile"
   fi
 
-  if curl -fsS --max-time 1 "$(health_url "$server")" >/dev/null 2>&1; then
+  if _hc_probe "$(health_url "$server")" 1; then
     if health_matches_expected_env "$server"; then
       echo "$server already running (untracked)"
       return 0
@@ -338,7 +357,7 @@ status_one() {
   if [[ -f "$pidfile" ]]; then
     pid="$(cat "$pidfile")"
     if is_pid_running "$pid"; then
-      if curl -fsS --max-time 2 "$(health_url "$server")" >/dev/null 2>&1; then
+      if _hc_probe "$(health_url "$server")" 2; then
         if ! health_matches_expected_env "$server"; then
           echo "$server wrong env (pid $pid)"
           return 1
@@ -350,7 +369,7 @@ status_one() {
       return 1
     fi
   fi
-  if curl -fsS --max-time 1 "$(health_url "$server")" >/dev/null 2>&1; then
+  if _hc_probe "$(health_url "$server")" 1; then
     if ! health_matches_expected_env "$server"; then
       echo "$server wrong env (untracked)"
       return 1

@@ -70,9 +70,26 @@ ARG HTTP_PROXY HTTPS_PROXY NO_PROXY http_proxy https_proxy no_proxy
 ENV HTTP_PROXY=${HTTP_PROXY} HTTPS_PROXY=${HTTPS_PROXY} NO_PROXY=${NO_PROXY} \
     http_proxy=${http_proxy} https_proxy=${https_proxy} no_proxy=${no_proxy}
 
+# W28A-SEC-R18 hardening: the runtime only needs ca-certificates (TLS trust) and
+# netcat-openbsd. curl/net-tools/procps are NOT installed — the healthcheck and
+# server_control probes use python's stdlib urllib instead of curl.
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    ca-certificates curl netcat-openbsd procps net-tools \
+    ca-certificates netcat-openbsd \
     && rm -rf /var/lib/apt/lists/*
+
+# W28A-SEC-R18 hardening: purge removable base-OS packages the runtime does not use
+# (curl/libcurl, openssh-client, net-tools, procps, perl, gzip) to eliminate their
+# CVE surface. Only actually-installed packages are purged, so this is robust across
+# base-image variants; the app runs on python stdlib and needs none of these.
+RUN set -eu; \
+    PKGS="curl libcurl3t64-gnutls libcurl4t64 openssh-client net-tools procps perl perl-base perl-modules-5.40 libperl5.40 gzip"; \
+    TO_PURGE=""; \
+    for p in $PKGS; do \
+      if dpkg-query -W -f='${Status}' "$p" 2>/dev/null | grep -q "install ok installed"; then TO_PURGE="$TO_PURGE $p"; fi; \
+    done; \
+    if [ -n "$TO_PURGE" ]; then apt-get purge -y --allow-remove-essential $TO_PURGE; fi; \
+    apt-get autoremove -y --purge; \
+    rm -rf /var/lib/apt/lists/*
 
 # Public runtime — no private CA overlay, no SSH server (the optional dev SSH
 # console is not shipped in the public image).

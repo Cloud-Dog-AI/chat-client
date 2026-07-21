@@ -19,4 +19,7 @@ HOST="${CHAT_CLIENT_HEALTH_HOST:-127.0.0.1}"
 PORT="${CLOUD_DOG__API_SERVER__PORT:-${CHAT_CLIENT_API_PORT:-0}}"
 PATH_PART="${CHAT_CLIENT_HEALTH_PATH:-/health}"
 
-curl -fsS --max-time 5 "http://${HOST}:${PORT}${PATH_PART}" >/dev/null
+# W28A-SEC-R18 hardening: probe with python's stdlib urllib instead of curl so the
+# runtime image does not need the curl package (removes curl/libcurl CVE surface).
+exec python3 -c 'import sys,urllib.request; urllib.request.urlopen(sys.argv[1], timeout=5).read()' \
+  "http://${HOST}:${PORT}${PATH_PART}"
